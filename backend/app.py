@@ -1,16 +1,17 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import pandas as pd
 import math
 import nibabel as nib
 import numpy as np
 from io import BytesIO
 from PIL import Image
+import traceback
 
 app = FastAPI()
 
-# Allow cross-origin requests
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,7 +51,7 @@ def convert_numpy_types(data):
 @app.get("/api/report")          
 async def get_report():
     try:
-        file_path = "files/report_Patient01-1.xlsx"  # Path to your file
+        file_path = "files/report_4031-5905.xlsx"  # Path to your file
         df = pd.read_excel(file_path)
         
         # Clean data
@@ -63,44 +64,197 @@ async def get_report():
         
         # Convert data to native Python types
         lesion_counts = convert_numpy_types(lesion_counts)
-        lesion_voxels_sum = float(lesion_voxels_sum)  # Ensure it is a native float
-        lesion_volume_sum = float(lesion_volume_sum)
+        lesion_volume_sum = float(lesion_volume_sum) # Ensure it is a native float
+    
+        # Extract lesion numbers
+        false_positives = lesion_counts.get('False positive', 0)
+        periventricular_lesions = lesion_counts.get('periventricular', 0)
+        juxtacortical_lesions = lesion_counts.get('juxtacortical', 0)
+        infratentorial_lesions = lesion_counts.get('infratentorial', 0)
+        wm_lesions = lesion_counts.get('WM', 0)
         
-        # Prepare the response
-        report_summary = {
-            "total_voxels_affected": lesion_voxels_sum,
-            "total_lesion_volume": lesion_volume_sum,
-            "counts_by_lesion_type": lesion_counts
+        # Check if McDonald Criteria is fulfilled
+        lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
+        affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
+
+        if affected_areas >= 2:
+            dissemination_space = "Fulfilled"
+        else:
+            dissemination_space = "Not fulfilled"
+
+
+        # Format response
+        report_data = {
+            "lesions": {
+                "false_positive": false_positives if false_positives > 0 else "None",
+                "periventricular": periventricular_lesions if periventricular_lesions > 0 else "None",
+                "juxtacortical": juxtacortical_lesions if juxtacortical_lesions > 0 else "None",
+                "infratentorial": infratentorial_lesions if infratentorial_lesions > 0 else "None",
+                "wm": wm_lesions if wm_lesions > 0 else "None",
+            },
+            "lesion_summary": lesion_counts,  # Full count of lesion types
+            "lesion_volume": lesion_volume_sum,
+            "dissemination_space": dissemination_space
         }
-
-
-        # Return as JSON
-        return report_summary
+        return report_data
     except Exception as e:
-        return {"error": str(e)}
-    
-    
-@app.get("/api/slice/{slice_num}")
-async def get_slice(slice_num: int):
+        print(f"Error generating report: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(
+            content={"error": "Error generating report"},
+            status_code=500
+        )
+
+@app.get("/api/total_lesions")
+async def get_total_lesions():
     try:
-        # Load the NIfTI file (replace with your file path)
-        nii_file_path = "files/lesion_map.nii.gz"
-        img = nib.load(nii_file_path)
-        data = img.get_fdata()
-
-        # Get the requested slice (slice_num) from the 3D array
-        # Make sure to select the correct axis (for example, axis=2 for slices in z direction)
-        slice_data = data[:, :, slice_num]
-
-        # Convert the slice data to a PIL image to return as a PNG
-        slice_img = Image.fromarray(np.uint8(slice_data * 255))  # Adjust scaling as needed
-        byte_io = BytesIO()
-        slice_img.save(byte_io, 'PNG')
-        byte_io.seek(0)
-
-        return JSONResponse(content={"slice": byte_io.getvalue().decode('latin1')})
+        # Load report data
+        report_df = pd.read_excel("files/report_4031-5905.xlsx")
+        
+        # Count lesions by type
+        lesion_counts = report_df['Lesion Type'].value_counts()
+        
+        # Get false positives count
+        false_positives = len(report_df[report_df['Lesion Type'] == 'False positive'])
+        
+        # Get true lesions count (all lesions except false positives)
+        true_lesions = len(report_df[report_df['Lesion Type'] != 'False positive'])
+        
+        print("Lesion counts from report:")
+        print(lesion_counts)
+        print(f"True lesions: {true_lesions}")
+        print(f"False positives: {false_positives}")
+        
+        return {
+            "total_lesions": len(report_df),
+            "true_lesions": true_lesions,
+            "false_positives": false_positives,
+            "lesion_types": lesion_counts.to_dict()
+        }
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        print(f"Error getting lesion counts: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
+
+@app.get("/api/slice/{slice_num}")
+async def get_slice(slice_num: int, show_false_positives: bool = False):
+    try:
+        # Load NIFTI files
+        lesion_file_path = "files/lesion_map.nii.gz"
+        brain_file_path = "files/flair.nii.gz" 
+        
+        # Load report data
+        report_df = pd.read_excel("files/report_4031-5905.xlsx")
+        
+        lesion_img = nib.load(lesion_file_path)
+        brain_img = nib.load(brain_file_path)
+        
+        lesion_data = lesion_img.get_fdata()
+        brain_data = brain_img.get_fdata()
+        
+        # Get the requested slices
+        lesion_slice = lesion_data[:, :, slice_num]
+        brain_slice = brain_data[:, :, slice_num]
+        
+        # Rotate and flip
+        lesion_slice = np.flip(np.rot90(lesion_slice), axis=1)
+        brain_slice = np.flip(np.rot90(brain_slice), axis=1)
+        
+        print(f"Slice {slice_num} information:")
+        print(f"  Shape after rotation: {lesion_slice.shape}")
+        print(f"  Lesion values: {np.unique(lesion_slice)}")
+        print(f"  Brain range: [{brain_slice.min()}, {brain_slice.max()}]")
+        
+        # Define colors for each lesion type
+        lesion_type_colors = {
+            'WM': (255, 0, 0),              # Red
+            'juxtacortical': (0, 255, 0),   # Green
+            'periventricular': (0, 0, 255), # Blue
+            'infratentorial': (255, 255, 0), # Yellow
+            'False positive': (128, 128, 128) # Gray - match Excel naming
+        }
+        
+        # Create RGBA image with brain background
+        colored_slice = np.zeros((*lesion_slice.shape, 4), dtype=np.uint8)
+        
+        # Normalize and set brain background
+        brain_normalized = ((brain_slice - brain_slice.min()) / 
+                          (brain_slice.max() - brain_slice.min() + 1e-8) * 255).astype(np.uint8)
+        colored_slice[:, :, 0] = brain_normalized
+        colored_slice[:, :, 1] = brain_normalized
+        colored_slice[:, :, 2] = brain_normalized
+        colored_slice[:, :, 3] = 255
+        
+        # Get unique lesion values in this slice
+        unique_lesions = np.unique(lesion_slice)
+        unique_lesions = unique_lesions[unique_lesions > 0.01]
+        
+        if len(unique_lesions) > 0:
+            print(f"Found {len(unique_lesions)} lesions in slice {slice_num}")
+            print(f"Show false positives mode: {show_false_positives}")
+            
+            for lesion_value in unique_lesions:
+                # Find this lesion in the report using Lesion Index
+                lesion_info = report_df[report_df['Lesion Index'] == lesion_value]
+                
+                if not lesion_info.empty:
+                    lesion_type = lesion_info['Lesion Type'].iloc[0]
+                    is_false_positive = lesion_type == 'False positive'
+                    
+                    # Skip lesions based on view mode
+                    if show_false_positives:
+                        # In false positive mode, only show false positives
+                        if not is_false_positive:
+                            print(f"  Skipping non-false positive lesion {lesion_value}")
+                            continue
+                    else:
+                        # In normal mode, skip false positives
+                        if is_false_positive:
+                            print(f"  Skipping false positive lesion {lesion_value}")
+                            continue
+                    
+                    # Create mask for this lesion
+                    lesion_mask = (np.abs(lesion_slice - lesion_value) < 0.5)
+                    
+                    # Get color based on lesion type
+                    color = lesion_type_colors[lesion_type]
+                    
+                    # Set transparency
+                    alpha = 150 if is_false_positive else 200
+                    
+                    # Apply color to the lesion
+                    colored_slice[lesion_mask] = [*color, alpha]
+                    
+                    print(f"  Showing lesion {lesion_value}: type={lesion_type}, is_false_positive={is_false_positive}")
+        
+        # Convert to PIL Image and return
+        slice_img = Image.fromarray(colored_slice, mode='RGBA')
+        slice_img = slice_img.resize((slice_img.size[0] * 2, slice_img.size[1] * 2), Image.NEAREST)
+        
+        byte_io = BytesIO()
+        slice_img.save(byte_io, format='PNG')
+        byte_io.seek(0)
+        
+        return Response(
+            content=byte_io.getvalue(),
+            media_type="image/png",
+            headers={
+                "Content-Disposition": "inline",
+                "filename": f"slice_{slice_num}.png",
+                "X-Total-Slices": str(lesion_data.shape[2])
+            }
+        )
+    
+    except Exception as e:
+        print(f"Error processing slice: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,23 +1,447 @@
+/* General styles */
+:root {
+  --primary-color: #2196f3;
+  --secondary-color: #1976d2;
+  --background-color: #f5f5f5;
+  --card-background: #ffffff;
+  --text-color: #333333;
+  --border-radius: 8px;
+  --spacing-unit: 1rem;
+}
+
 body {
-    font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+/* Main container of the report */
+.report-container {
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 0 var(--spacing-unit);
+}
+
+/* Report header */
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--primary-color);
+}
+
+.report-header h1 {
+  color: var(--primary-color);
+  margin: 0;
+  font-size: 2.5rem;
+}
+
+/* 3D visualization button */
+.view-3d-button {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--border-radius);
+  text-decoration: none;
+  transition: background-color 0.3s ease;
+}
+
+.view-3d-button:hover {
+  background-color: var(--secondary-color);
+}
+
+/* Report sections */
+.report-section {
+  background-color: var(--card-background);
+  border-radius: var(--border-radius);
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.subsection {
+  margin-bottom: 2rem;
+}
+
+/* Lesion statistics */
+.lesion-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.stat-card {
+  background-color: #f8f9fa;
+  padding: 1.5rem;
+  border-radius: var(--border-radius);
+  text-align: center;
+  border: 1px solid #e9ecef;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  display: block;
+  margin-top: 0.5rem;
+}
+
+/* McDonald criteria */
+.criteria-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.criteria-card {
+  background-color: #f8f9fa;
+  padding: 1.5rem;
+  border-radius: var(--border-radius);
+  border: 1px solid #e9ecef;
+}
+
+/* Evaluation list */
+.assessment-list {
+  list-style-type: none;
+  padding: 0;
+}
+
+.assessment-list li {
+  padding: 0.5rem 0;
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.assessment-list li::before {
+  content: "•";
+  color: var(--primary-color);
+  position: absolute;
+  left: 0;
+  font-weight: bold;
+}
+
+/* Highlight and special elements */
+.highlight {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+/* Loading spinner */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
+.loading-spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Error message */
+.error-message {
+  background-color: #ffebee;
+  color: #c62828;
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  margin-bottom: 1rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .report-header {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+
+  .lesion-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .criteria-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.app {
+  padding: 20px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+table, th, td {
+  border: 1px solid black;
+}
+
+th, td {
+  padding: 10px;
+  text-align: left;
+}
+
+.viewer-container {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.image-container {
+  width: 100%;
+  height: 600px;
+  margin: 20px 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.image-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #000;
+}
+
+.brain-slice-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background-color: #000;
+}
+
+.controls {
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.slice-slider {
+  width: 100%;
+  height: 20px;
+}
+
+/* Navigation bar */
+.navigation-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 1rem;
+  z-index: 100;
+}
+
+/* Back button */
+.back-button {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--border-radius);
+  text-decoration: none;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.back-button:hover {
+  background-color: var(--secondary-color);
+  transform: translateX(-5px);
+}
+
+.back-button::before {
+  content: "←";
+  font-size: 1.2em;
+}
+
+/* Viewer header */
+.viewer-header {
+  text-align: center;
+  padding: 1rem;
+  margin-bottom: 2rem;
+  background-color: var(--card-background);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.viewer-header h1 {
+  margin: 0;
+  color: var(--primary-color);
+  font-size: 2rem;
+}
+
+/* Responsive adjustment */
+@media (max-width: 768px) {
+  .viewer-header {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
   }
   
-  .app {
-    padding: 20px;
-  }
-  
-  table {
+  .back-button {
     width: 100%;
-    border-collapse: collapse;
-    margin-top: 20px;
+    justify-content: center;
   }
-  
-  table, th, td {
-    border: 1px solid black;
+}
+
+.viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.toggle-button {
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.toggle-button.active {
+  background-color: #1976d2;
+}
+
+.toggle-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.lesion-info {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.9rem;
+  color: var(--text-color);
+}
+
+.lesion-info span {
+  padding: 0.25rem 0.5rem;
+  background-color: #f0f0f0;
+  border-radius: var(--border-radius);
+}
+
+/* Update existing header-actions style */
+.header-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+/* New shared button style */
+.action-button {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--border-radius);
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.action-button:hover {
+  background-color: var(--secondary-color);
+  transform: translateY(-2px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Specific style for criteria button */
+.criteria-button::before {
+  content: "📄";
+  font-size: 1.2em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .header-actions {
+    flex-direction: column;
+    width: 100%;
   }
-  
-  th, td {
-    padding: 10px;
-    text-align: left;
+
+  .action-button {
+    width: 100%;
+    justify-content: center;
   }
+}
+
+.lesion-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background-color: white;
+  border-radius: var(--border-radius);
+  align-items: center;
+}
+
+.legend-total {
+  font-weight: 500;
+  color: var(--text-color);
+  margin-right: 1rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-color);
+}
+
+.color-circle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .viewer-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lesion-legend {
+    width: 100%;
+  }
+}
   
