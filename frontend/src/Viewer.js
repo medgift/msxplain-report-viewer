@@ -13,6 +13,7 @@ const ThreeDImagePage = () => {
   const [maxSlice, setMaxSlice] = useState(255);
   const [showFalsePositives, setShowFalsePositives] = useState(false);
   const [lesionCounts, setLesionCounts] = useState(null);
+  const [isMouseOverImage, setIsMouseOverImage] = useState(false);
 
   // Fetch total lesions info on component mount
   useEffect(() => {
@@ -124,20 +125,34 @@ const ThreeDImagePage = () => {
   }, [sliceNum, debouncedFetchSlice]);
 
   const handleWheel = (event) => {
-    event.preventDefault(); // Prevent page scroll
-    
-    // Determine the direction of the scroll
-    const direction = event.deltaY > 0 ? 1 : -1;
-    
-    // Compute the new slice number
-    setSliceNum((prevSlice) => {
-      const newSlice = prevSlice + direction;
-      // Ensure the value is within the limits
-      if (newSlice < 0) return 0;
-      if (newSlice > maxSlice) return maxSlice;
-      return newSlice;
-    });
+    if (isMouseOverImage) {
+      event.preventDefault(); // Prevent page scroll
+      // Determine the direction of the scroll
+      const direction = event.deltaY > 0 ? 1 : -1;
+      // Compute the new slice number
+      setSliceNum((prevSlice) => {
+        const newSlice = prevSlice + direction;
+        // Ensure the value is within the limits
+        if (newSlice < 0) return 0;
+        if (newSlice > maxSlice) return maxSlice;
+        return newSlice;
+      });
+    }
   };
+
+  useEffect(() => {
+    const handleScroll = (event) => {
+      if (isMouseOverImage) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', handleScroll, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', handleScroll);
+    };
+  }, [isMouseOverImage]);
 
   return (
     <div className="viewer-container">
@@ -160,7 +175,12 @@ const ThreeDImagePage = () => {
         </div>
       </header>
       
-      <div className="image-container" onWheel={handleWheel}>
+      <div 
+        className="image-container" 
+        onWheel={handleWheel}
+        onMouseEnter={() => setIsMouseOverImage(true)}
+        onMouseLeave={() => setIsMouseOverImage(false)}
+      >
         {error && <p className="error-message">{error}</p>}
         {loading ? (
           <div className="loading-container">
