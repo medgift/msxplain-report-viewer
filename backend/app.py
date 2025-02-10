@@ -1,13 +1,17 @@
+import traceback
+import os
+from datetime import datetime
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import uvicorn
 import pandas as pd
 import math
 import nibabel as nib
 import numpy as np
 from io import BytesIO
 from PIL import Image
-import traceback
+import pydicom
 
 app = FastAPI()
 
@@ -47,11 +51,18 @@ def convert_numpy_types(data):
             return data.item()
     return data
 
-# Route to get data from the Excel file
-@app.get("/api/report")          
-async def get_report():
+def format_birth_date(date_str):
     try:
-        file_path = "files/report_4031-5905.xlsx"  # Path to your file
+        date_obj = datetime.strptime(date_str, '%Y%m%d')
+        return date_obj.strftime('%d/%m/%Y')
+    except ValueError:
+        return "Unknown"
+
+# Route to get data from the Excel file
+@app.get("/api/report/{patient_name}")          
+async def get_report(patient_name: str):
+    try:
+        file_path = f"files/report_4031-{patient_name}.xlsx"  # Path to your file
         df = pd.read_excel(file_path)
         
         # Clean data
@@ -73,6 +84,27 @@ async def get_report():
         infratentorial_lesions = lesion_counts.get('infratentorial', 0)
         wm_lesions = lesion_counts.get('WM', 0)
         
+        # Load DICOM file and extract metadata
+        dicom_base_folder = f"files/DICOMS/4031-{patient_name}/"
+        dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
+        dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder)) if 'flair' in f.lower()), None)
+        print(dicom_date_folder, dicom_flair_folder)
+        if dicom_date_folder and dicom_flair_folder:
+            dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
+            print(dicom_folder)
+            dicom_files = [f for f in os.listdir(dicom_folder)]
+            if dicom_files:
+                dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
+                dicom_data = pydicom.dcmread(dicom_file_path)
+                patient_name = str(dicom_data.PatientName)
+                patient_id = str(dicom_data.PatientID)
+                patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
+                patient_sex = str(dicom_data.PatientSex)
+            else:
+                patient_name = patient_id = patient_birth_date = patient_sex = None
+        else:
+            patient_name = patient_id = patient_birth_date = patient_sex = None
+        
         # Check if McDonald Criteria is fulfilled
         lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
         affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
@@ -81,6 +113,9 @@ async def get_report():
             dissemination_space = "Fulfilled"
         else:
             dissemination_space = "Not fulfilled"
+            
+        print(patient_name, patient_id, patient_birth_date)
+        print(str(patient_birth_date))
 
 
         # Format response
@@ -94,7 +129,11 @@ async def get_report():
             },
             "lesion_summary": lesion_counts,  # Full count of lesion types
             "lesion_volume": lesion_volume_sum,
-            "dissemination_space": dissemination_space
+            "dissemination_space": dissemination_space,
+            "patient_name": patient_name if patient_name else "Unknown",
+            "patient_id": patient_id if patient_id else "Unknown",
+            "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
+            "patient_sex": patient_sex if patient_sex else "Unknown"
         }
         return report_data
     except Exception as e:
@@ -105,11 +144,11 @@ async def get_report():
             status_code=500
         )
 
-@app.get("/api/total_lesions")
-async def get_total_lesions():
+@app.get("/api/total_lesions/{patient_name}")
+async def get_total_lesions(patient_name: str):
     try:
         # Load report data
-        report_df = pd.read_excel("files/report_4031-5905.xlsx")
+        report_df = pd.read_excel(f"files/report_4031-{patient_name}.xlsx")
         
         # Count lesions by type
         lesion_counts = report_df['Lesion Type'].value_counts()
@@ -139,15 +178,15 @@ async def get_total_lesions():
             status_code=500
         )
 
-@app.get("/api/slice/{slice_num}")
-async def get_slice(slice_num: int, show_false_positives: bool = False):
+@app.get("/api/slice/{patient_name}/{slice_num}")
+async def get_slice(patient_name: str, slice_num: int, show_false_positives: bool = False):
     try:
         # Load NIFTI files
-        lesion_file_path = "files/lesion_map.nii.gz"
-        brain_file_path = "files/flair.nii.gz" 
+        lesion_file_path = f"files/NIFTI/4031-{patient_name}/lesion_map.nii.gz"
+        brain_file_path = f"files/NIFTI/4031-{patient_name}/flair.nii.gz" 
         
         # Load report data
-        report_df = pd.read_excel("files/report_4031-5905.xlsx")
+        report_df = pd.read_excel(f"files/report_4031-{patient_name}.xlsx")
         
         lesion_img = nib.load(lesion_file_path)
         brain_img = nib.load(brain_file_path)
@@ -257,5 +296,4 @@ async def get_slice(slice_num: int, show_false_positives: bool = False):
         )
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=5000)
