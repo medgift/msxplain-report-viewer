@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import axios from "axios";
 import './styles.css';
 
 const ThreeDImagePage = () => {
+  const { patient_name } = useParams(); // Obtener patient_name de los parámetros de la URL
   const [sliceNum, setSliceNum] = useState(0);
   const [displayedSlice, setDisplayedSlice] = useState(0);
   const [imageData, setImageData] = useState(null);
@@ -17,14 +18,14 @@ const ThreeDImagePage = () => {
   useEffect(() => {
     const fetchTotalLesions = async () => {
       try {
-        const response = await axios.get('http://127.0.0.1:5000/api/total_lesions');
+        const response = await axios.get(`http://127.0.0.1:5000/api/total_lesions/${patient_name}`);
         setLesionCounts(response.data);
       } catch (error) {
         console.error("Error fetching lesion info:", error);
       }
     };
     fetchTotalLesions();
-  }, []);
+  }, [patient_name]);
 
   // Color mapping for the legend - matching backend colors exactly
   const lesionColors = {
@@ -83,7 +84,7 @@ const ThreeDImagePage = () => {
           setLoading(true);
           try {
             const response = await axios.get(
-              `http://127.0.0.1:5000/api/slice/${sliceNumber}`,
+              `http://127.0.0.1:5000/api/slice/${patient_name}/${sliceNumber}`,
               {
                 params: { show_false_positives: showFalsePositives },
                 responseType: 'arraybuffer'
@@ -114,7 +115,7 @@ const ThreeDImagePage = () => {
         }, 300);
       };
     })(),
-    [showFalsePositives]
+    [showFalsePositives, patient_name]
   );
 
   // Effect to load the image when sliceNum changes
@@ -141,7 +142,7 @@ const ThreeDImagePage = () => {
   return (
     <div className="viewer-container">
       <div className="navigation-bar">
-        <Link to="/" className="back-button">
+        <Link to={`/report/${patient_name}`} className="back-button">
           Back to Report
         </Link>
       </div>

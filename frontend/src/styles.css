@@ -33,6 +33,8 @@ body {
   margin-bottom: 2rem;
   padding-bottom: 1rem;
   border-bottom: 2px solid var(--primary-color);
+  text-align: center;
+  margin-bottom: 20px;
 }
 
 .report-header h1 {
@@ -444,4 +446,58 @@ th, td {
     width: 100%;
   }
 }
-  
+
+.patient-info {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.patient-info p {
+  margin: 0 10px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.patient-input {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-direction: column;
+  align-items: center;
+}
+
+.patient-input textarea {
+  width: 300px;
+  height: 40px;
+  margin-right: 10px;
+  padding: 10px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.patient-input button {
+  padding: 10px 20px;
+  font-size: 16px;
+  cursor: pointer;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+}
+
+.patient-input button:hover {
+  background-color: #0056b3;
+}
+
+.input-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background-color: #f5f5f5;
+}
