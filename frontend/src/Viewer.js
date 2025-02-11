@@ -30,11 +30,11 @@ const ThreeDImagePage = () => {
 
   // Color mapping for the legend - matching backend colors exactly
   const lesionColors = {
-    'WM': '#FF0000',             // Red
-    'juxtacortical': '#00FF00',  // Green
-    'periventricular': '#0000FF',// Blue
-    'infratentorial': '#FFFF00', // Yellow
-    'False positive': '#808080'  // Gray - match Excel naming
+    'Deep White Matter': '#FF0000',             // Red
+    'Juxtacortical': '#00FF00',  // Green
+    'Periventricular': '#0000FF',// Blue
+    'Infratentorial': '#FFFF00', // Yellow
+    'False Positive': '#808080'  // Gray - match Excel naming
   };
 
   const renderLesionInfo = () => {
