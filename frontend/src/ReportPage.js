@@ -80,7 +80,7 @@ const ReportPage = () => {
               <p><strong>Sex:</strong> {reportData.patient_sex}</p>
             </div>
             
-            <h2>Diagnosis</h2>
+            <h2>Automated Analysis</h2>
             
             <div className="subsection">
               <h3>Technique</h3>
@@ -105,7 +105,7 @@ const ReportPage = () => {
                   <span className="stat-value">{reportData.lesions.infratentorial}</span>
                 </div>
                 <div className="stat-card">
-                  <h4>White Matter</h4>
+                  <h4>Deep White Matter</h4>
                   <span className="stat-value">{reportData.lesions.wm}</span>
                 </div>
               </div>
