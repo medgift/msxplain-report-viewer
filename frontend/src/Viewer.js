@@ -47,7 +47,7 @@ const ThreeDImagePage = () => {
           <div className="legend-item">
             <div 
               className="color-circle" 
-              style={{ backgroundColor: lesionColors['False positive'] }}
+              style={{ backgroundColor: lesionColors['False Positive'] }}
             ></div>
             <span>False positive: {lesionCounts.false_positives}</span>
           </div>
@@ -60,7 +60,7 @@ const ThreeDImagePage = () => {
       <div className="lesion-legend">
         <div className="legend-total">True Lesions: {lesionCounts.true_lesions}</div>
         {Object.entries(lesionCounts.lesion_types)
-          .filter(([type]) => type !== 'False positive')
+          .filter(([type]) => type !== 'False Positive')
           .map(([type, count]) => (
             <div key={type} className="legend-item">
               <div 
