@@ -78,20 +78,18 @@ async def get_report(patient_name: str):
         lesion_volume_sum = float(lesion_volume_sum) # Ensure it is a native float
     
         # Extract lesion numbers
-        false_positives = lesion_counts.get('False positive', 0)
-        periventricular_lesions = lesion_counts.get('periventricular', 0)
-        juxtacortical_lesions = lesion_counts.get('juxtacortical', 0)
-        infratentorial_lesions = lesion_counts.get('infratentorial', 0)
-        wm_lesions = lesion_counts.get('WM', 0)
+        false_positives = lesion_counts.get('False Positive', 0)
+        periventricular_lesions = lesion_counts.get('Periventricular', 0)
+        juxtacortical_lesions = lesion_counts.get('Juxtacortical', 0)
+        infratentorial_lesions = lesion_counts.get('Infratentorial', 0)
+        wm_lesions = lesion_counts.get('Deep White Matter', 0)
         
         # Load DICOM file and extract metadata
         dicom_base_folder = f"files/DICOMS/4031-{patient_name}/"
         dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
         dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder)) if 'flair' in f.lower()), None)
-        print(dicom_date_folder, dicom_flair_folder)
         if dicom_date_folder and dicom_flair_folder:
             dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
-            print(dicom_folder)
             dicom_files = [f for f in os.listdir(dicom_folder)]
             if dicom_files:
                 dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
@@ -113,10 +111,6 @@ async def get_report(patient_name: str):
             dissemination_space = "Fulfilled"
         else:
             dissemination_space = "Not fulfilled"
-            
-        print(patient_name, patient_id, patient_birth_date)
-        print(str(patient_birth_date))
-
 
         # Format response
         report_data = {
@@ -154,10 +148,10 @@ async def get_total_lesions(patient_name: str):
         lesion_counts = report_df['Lesion Type'].value_counts()
         
         # Get false positives count
-        false_positives = len(report_df[report_df['Lesion Type'] == 'False positive'])
+        false_positives = len(report_df[report_df['Lesion Type'] == 'False Positive'])
         
         # Get true lesions count (all lesions except false positives)
-        true_lesions = len(report_df[report_df['Lesion Type'] != 'False positive'])
+        true_lesions = len(report_df[report_df['Lesion Type'] != 'False Positive'])
         
         print("Lesion counts from report:")
         print(lesion_counts)
@@ -209,11 +203,11 @@ async def get_slice(patient_name: str, slice_num: int, show_false_positives: boo
         
         # Define colors for each lesion type
         lesion_type_colors = {
-            'WM': (255, 0, 0),              # Red
-            'juxtacortical': (0, 255, 0),   # Green
-            'periventricular': (0, 0, 255), # Blue
-            'infratentorial': (255, 255, 0), # Yellow
-            'False positive': (128, 128, 128) # Gray - match Excel naming
+            'Deep White Matter': (255, 0, 0),              # Red
+            'Juxtacortical': (0, 255, 0),   # Green
+            'Periventricular': (0, 0, 255), # Blue
+            'Infratentorial': (255, 255, 0), # Yellow
+            'False Positive': (128, 128, 128) # Gray - match Excel naming
         }
         
         # Create RGBA image with brain background
@@ -241,7 +235,7 @@ async def get_slice(patient_name: str, slice_num: int, show_false_positives: boo
                 
                 if not lesion_info.empty:
                     lesion_type = lesion_info['Lesion Type'].iloc[0]
-                    is_false_positive = lesion_type == 'False positive'
+                    is_false_positive = lesion_type == 'False Positive'
                     
                     # Skip lesions based on view mode
                     if show_false_positives:
