@@ -1,7 +1,7 @@
 import traceback
 import os
 from datetime import datetime
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -12,17 +12,25 @@ import numpy as np
 from io import BytesIO
 from PIL import Image
 import pydicom
+from typing import List
+import shutil
+import asyncio
+from msxplain.msxplain_report import MSXplainReport
 
 app = FastAPI()
 
-# Configure CORS
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3001"],  # React app URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Create necessary directories
+os.makedirs("files/uploads", exist_ok=True)
+os.makedirs("files/processed", exist_ok=True)
 
 def sanitize_data(data):
     # Recursively check the data and replace invalid values
@@ -288,6 +296,177 @@ async def get_slice(patient_name: str, slice_num: int, show_false_positives: boo
             content={"error": str(e)},
             status_code=500
         )
+        
+@app.post("/api/upload-dicoms")
+async def upload_dicoms(
+    flair_files: List[UploadFile] = File(...),
+    t1_files: List[UploadFile] = File(...)
+):
+    try:
+        # Generate unique patient ID
+        patient_id = f"patient_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Create base directories
+        base_dir = os.path.join("files", "uploads", patient_id)
+        flair_dir = os.path.join(base_dir, "flair")
+        t1_dir = os.path.join(base_dir, "t1")
+        
+        # Create directories if they don't exist
+        os.makedirs(flair_dir, exist_ok=True)
+        os.makedirs(t1_dir, exist_ok=True)
+        
+        # Save FLAIR files
+        for file in flair_files:
+            filename = os.path.basename(file.filename)
+            file_path = os.path.join(flair_dir, filename)
+            content = await file.read()
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+                
+        # Save T1 files
+        for file in t1_files:
+            filename = os.path.basename(file.filename)
+            file_path = os.path.join(t1_dir, filename)
+            content = await file.read()
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+        
+        # Start processing pipeline
+        process_task = asyncio.create_task(process_scans(patient_id))
+        
+        return JSONResponse(
+            content={
+                "message": "Files uploaded successfully. Processing started.",
+                "patient_id": patient_id
+            },
+            status_code=200
+        )
+    except Exception as e:
+        print(f"Error in upload: {str(e)}")
+        traceback.print_exc()
+        # Clean up any partially created directories
+        if 'base_dir' in locals():
+            shutil.rmtree(base_dir, ignore_errors=True)
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
+
+def validate_dicoms(directory):
+    """Validate that all files in directory are valid DICOM files"""
+    try:
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            pydicom.dcmread(file_path)
+        return True
+    except Exception as e:
+        print(f"DICOM validation error: {str(e)}")
+        return False
+
+async def process_scans(patient_id):
+    """Process both FLAIR and T1 scans using MSXplain pipeline"""
+    try:
+        # Define directories
+        base_dir = f"files/uploads/{patient_id}"
+        output_dir = f"files/processed/{patient_id}"
+        flair_dir = f"{base_dir}/flair"
+        t1_dir = f"{base_dir}/t1"
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Create progress marker
+        with open(f"{output_dir}/preprocessing_started", "w") as f:
+            f.write("")
+
+        # Initialize MSXplain Report Generator
+        msxplain = MSXplainReport(
+            flair_dir=flair_dir,
+            t1_dir=t1_dir,
+            output_dir=output_dir
+        )
+        
+        # Run the complete pipeline
+        success = msxplain.run()
+        
+        if success:
+            # Mark processing complete
+            with open(f"{output_dir}/report_complete", "w") as f:
+                f.write("")
+            print(f"Processing completed for {patient_id}")
+            return True
+        else:
+            raise Exception("MSXplain pipeline failed")
+
+    except Exception as e:
+        print(f"Error in processing: {str(e)}")
+        traceback.print_exc()
+        return False
+
+@app.get("/api/process-status/{patient_id}")
+async def get_process_status(patient_id: str):
+    try:
+        output_dir = os.path.join(PROCESSED_DIR, patient_id)
+        
+        # Check for various milestone files to determine progress
+        status = {
+            "preprocessing": os.path.exists(f"{output_dir}/preprocessing_complete"),
+            "msxplain": os.path.exists(f"{output_dir}/msxplain_complete"),
+            "report": os.path.exists(f"{output_dir}/report_complete")
+        }
+        
+        return status
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
+
+@app.get("/api/patients")
+async def get_patients():
+    try:
+        # Get list of processed patient directories
+        processed_dir = "files/processed"
+        if not os.path.exists(processed_dir):
+            return []
+            
+        patients = []
+        for patient_id in os.listdir(processed_dir):
+            patient_dir = os.path.join(processed_dir, patient_id)
+            if os.path.isdir(patient_dir):
+                # Get patient status
+                status = "Complete"
+                if not os.path.exists(os.path.join(patient_dir, "report_complete")):
+                    status = "Processing"
+                
+                # Get scan date from directory name or metadata
+                try:
+                    scan_date = datetime.strptime(
+                        patient_id.split('_')[1], 
+                        '%Y%m%d'
+                    ).strftime('%Y-%m-%d')
+                except:
+                    scan_date = "Unknown"
+                
+                patients.append({
+                    "id": patient_id,
+                    "scan_date": scan_date,
+                    "status": status
+                })
+        
+        return sorted(patients, key=lambda x: x['scan_date'], reverse=True)
+        
+    except Exception as e:
+        print(f"Error getting patients: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
+
+def main():
+    """Run the FastAPI application"""
+    uvicorn.run(app, host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=5000)
+    main()
