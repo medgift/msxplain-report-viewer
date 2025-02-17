@@ -1,156 +1,222 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FileUpload.css';
+import { Progress, Button } from 'antd';
 
 const FileUpload = () => {
-  const [folders, setFolders] = useState({
-    flair: null,
-    t1: null
-  });
+  console.log('FileUpload component rendered');
+  const [selectedFolder, setSelectedFolder] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [runId, setRunId] = useState(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState({
+    patients: {}
+  });
   const [progress, setProgress] = useState({});
   const [error, setError] = useState(null);
+  const [reportPath, setReportPath] = useState(null);
 
-  const handleFolderSelect = (event, type) => {
-    const files = Array.from(event.target.files);
-    if (files.length > 0) {
-      setFolders(prev => ({
-        ...prev,
-        [type]: files
-      }));
-      setError(null);
+  const getProgressPercent = (step) => {
+    if (!step) return 0;
+    switch (step) {
+      case 'pending': return 0;
+      case 'processing': return 50;
+      case 'completed': return 100;
+      default: return 0;
     }
   };
 
-  const validateFiles = () => {
-    if (!folders.flair || !folders.t1) {
-      setError('Please select both FLAIR and T1 DICOM folders');
-      return false;
-    }
-    return true;
-  };
-
-  const handleUpload = async () => {
-    if (!validateFiles()) return;
-
-    try {
-      setUploading(true);
-      setError(null);
-
-      // Create FormData with both folders
-      const formData = new FormData();
-      
-      // Add FLAIR files
-      folders.flair.forEach((file) => {
-        formData.append('flair_files', file, `flair/${file.name}`);
-      });
-
-      // Add T1 files
-      folders.t1.forEach((file) => {
-        formData.append('t1_files', file, `t1/${file.name}`);
-      });
-
-      const response = await axios.post('http://localhost:5000/api/upload-dicoms', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      setProcessing(true);
-      const patientId = response.data.patient_id;
-      
-      // Start polling for status
-      const statusInterval = setInterval(async () => {
+  useEffect(() => {
+    let intervalId;
+    if (runId && processing) {
+      intervalId = setInterval(async () => {
         try {
-          const statusResponse = await axios.get(
-            `http://localhost:5000/api/process-status/${patientId}`
+          const response = await fetch(`http://localhost:5000/api/process-status/${runId}`);
+          const data = await response.json();
+          setProcessingStatus(data);
+          
+          // Check if all patients are completed
+          const allCompleted = Object.values(data.patients).every(
+            patient => patient.status === 'completed' || patient.status === 'error'
           );
           
-          setProgress(statusResponse.data);
-          
-          if (Object.values(statusResponse.data).every(status => status)) {
-            clearInterval(statusInterval);
+          if (allCompleted) {
             setProcessing(false);
-            window.location.href = `/report/${patientId}`;
+            clearInterval(intervalId);
           }
         } catch (error) {
           console.error('Error checking status:', error);
+          setProcessing(false);
+          clearInterval(intervalId);
         }
-      }, 5000);
+      }, 2000);
 
+      return () => {
+        if (intervalId) {
+          clearInterval(intervalId);
+        }
+      };
+    }
+  }, [runId, processing]);
+
+  const handleFolderSelect = (event) => {
+    const files = event.target.files;
+    setSelectedFolder(files);
+    setUploadComplete(false);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFolder || selectedFolder.length === 0) return;
+
+    setUploading(true);
+    const formData = new FormData();
+    
+    // Add each file to formData maintaining their relative paths
+    Array.from(selectedFolder).forEach(file => {
+      formData.append('files', file, file.webkitRelativePath);
+    });
+
+    try {
+      const response = await fetch('http://localhost:5000/api/upload-dicoms', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      setRunId(data.run_id);
+      setUploadComplete(true);
     } catch (error) {
-      setError(error.response?.data?.error || 'Upload failed');
+      console.error('Error uploading:', error);
+      setError(error.message);
     } finally {
       setUploading(false);
     }
   };
 
+  const handleProcess = async () => {
+    if (!runId) return;
+
+    setProcessing(true);
+    try {
+      console.log(`Starting processing for run_id: ${runId}`);
+      const response = await fetch(`http://localhost:5000/api/process-scans/${runId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Processing started:', data);
+      setProcessingStatus(data);
+    } catch (error) {
+      console.error('Error starting processing:', error);
+      setProcessing(false);
+    }
+  };
+
+  const handleViewReport = () => {
+    // Implement report viewing logic here
+    window.open(`/api/view-report/${runId}`, '_blank');
+  };
+
   return (
     <div className="upload-container">
-      <h2>Upload MRI Scans</h2>
+      <div className="upload-header">
+        <h2>Upload Patient Data</h2>
+        <p className="upload-instructions">
+          Select a folder containing patient data. Each patient folder should contain session folders with 'flair' and 't1' subfolders.
+        </p>
+      </div>
       
-      <div className="upload-box">
-        <div className="folder-upload">
-          <h3>FLAIR Images</h3>
-          <input
-            type="file"
-            webkitdirectory="true"
-            directory="true"
-            multiple
-            onChange={(e) => handleFolderSelect(e, 'flair')}
-            disabled={uploading || processing}
-          />
-          {folders.flair && (
-            <div className="file-count">
-              {folders.flair.length} files selected
-            </div>
-          )}
-        </div>
-
-        <div className="folder-upload">
-          <h3>T1 Images</h3>
-          <input
-            type="file"
-            webkitdirectory="true"
-            directory="true"
-            multiple
-            onChange={(e) => handleFolderSelect(e, 't1')}
-            disabled={uploading || processing}
-          />
-          {folders.t1 && (
-            <div className="file-count">
-              {folders.t1.length} files selected
-            </div>
-          )}
-        </div>
-        
-        <button 
+      <div className="upload-controls">
+        <input
+          type="file"
+          webkitdirectory="true"
+          directory="true"
+          onChange={handleFolderSelect}
+          className="file-input"
+        />
+        <button
           onClick={handleUpload}
-          disabled={!folders.flair || !folders.t1 || uploading || processing}
+          disabled={uploading || !selectedFolder}
           className="upload-button"
         >
-          {uploading ? 'Uploading...' : processing ? 'Processing...' : 'Upload'}
+          {uploading ? 'Uploading...' : 'Upload Folder'}
         </button>
+        {uploadComplete && (
+          <button
+            onClick={handleProcess}
+            disabled={processing}
+            className="process-button"
+          >
+            {processing ? 'Processing...' : 'Process Files'}
+          </button>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
 
-      {processing && (
-        <div className="progress-container">
-          <h3>Processing Status:</h3>
-          <div className="progress-items">
-            <div className={`progress-item ${progress.preprocessing ? 'complete' : ''}`}>
-              Preprocessing
-            </div>
-            <div className={`progress-item ${progress.msxplain ? 'complete' : ''}`}>
-              MSXplain Analysis
-            </div>
-            <div className={`progress-item ${progress.report ? 'complete' : ''}`}>
-              Report Generation
-            </div>
+      {runId && Object.entries(processingStatus.patients || {}).map(([patientId, status]) => (
+        <div key={patientId} className="patient-container">
+          <div className="patient-header">
+            <h3>Patient: {patientId}</h3>
           </div>
+          
+          {status && status.steps && (
+            <>
+              <div className="progress-section">
+                <div className="progress-label">Preprocessing:</div>
+                <div className="progress-bar-container">
+                  <div 
+                    className={`progress-bar ${status.steps.preprocessing === 'error' ? 'error' : 'success'}`}
+                    style={{width: `${getProgressPercent(status.steps.preprocessing)}%`}}
+                  />
+                </div>
+              </div>
+
+              <div className="progress-section">
+                <div className="progress-label">MSXplain Analysis:</div>
+                <div className="progress-bar-container">
+                  <div 
+                    className={`progress-bar ${status.steps.msxplain === 'error' ? 'error' : 'success'}`}
+                    style={{width: `${getProgressPercent(status.steps.msxplain)}%`}}
+                  />
+                </div>
+              </div>
+
+              <div className="progress-section">
+                <div className="progress-label">Report Generation:</div>
+                <div className="progress-bar-container">
+                  <div 
+                    className={`progress-bar ${status.steps.report === 'error' ? 'error' : 'success'}`}
+                    style={{width: `${getProgressPercent(status.steps.report)}%`}}
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
+      ))}
+
+      {runId && (
+        <Button
+          type="primary"
+          onClick={handleViewReport}
+          style={{ marginTop: '10px' }}
+        >
+          View Report
+        </Button>
       )}
     </div>
   );

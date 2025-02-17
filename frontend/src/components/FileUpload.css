@@ -1,27 +1,53 @@
 .upload-container {
-  max-width: 600px;
-  margin: 2rem auto;
-  padding: 2rem;
-  background: white;
-  border-radius: var(--border-radius);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-.upload-box {
+.upload-header {
+  margin-bottom: 30px;
+}
+
+.upload-header h2 {
+  color: #1890ff;
+  margin-bottom: 10px;
+}
+
+.upload-instructions {
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.upload-controls {
   display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin: 1rem 0;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 30px;
+  padding: 20px;
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
+  background-color: #fafafa;
+}
+
+.upload-controls:hover {
+  border-color: #1890ff;
+}
+
+.file-input {
+  flex: 1;
 }
 
 .upload-button {
-  background-color: var(--primary-color);
+  padding: 8px 16px;
   color: white;
-  padding: 0.75rem 1.5rem;
   border: none;
-  border-radius: var(--border-radius);
+  border-radius: 4px;
   cursor: pointer;
   transition: background-color 0.3s;
+}
+
+.upload-button:enabled {
+  background-color: #1890ff;
 }
 
 .upload-button:disabled {
@@ -29,39 +55,86 @@
   cursor: not-allowed;
 }
 
-.progress-container {
-  margin-top: 2rem;
+.upload-button:enabled:hover {
+  background-color: #40a9ff;
 }
 
-.progress-items {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.patient-container {
+  margin-top: 30px;
+  padding: 20px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  background-color: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
-.progress-item {
-  padding: 0.5rem;
-  background: #f0f0f0;
-  border-radius: var(--border-radius);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.patient-header {
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
 }
 
-.progress-item.complete {
-  background: #e8f5e9;
-  color: #2e7d32;
+.patient-header h3 {
+  color: #262626;
+  margin: 0;
 }
 
-.progress-item.complete::before {
-  content: "✓";
-  color: #2e7d32;
+.progress-section {
+  margin-bottom: 20px;
+}
+
+.progress-label {
+  margin-bottom: 8px;
+  color: #595959;
+  font-weight: 500;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 20px;
+  background-color: #f0f0f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  transition: width 0.3s ease-in-out;
+}
+
+.progress-bar.success {
+  background-color: #1890ff;
+}
+
+.progress-bar.error {
+  background-color: #ff4d4f;
 }
 
 .error-message {
-  color: #d32f2f;
-  margin-top: 1rem;
-  padding: 0.5rem;
-  background: #ffebee;
-  border-radius: var(--border-radius);
+  color: #ff4d4f;
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #fff1f0;
+  border: 1px solid #ffccc7;
+  border-radius: 4px;
+}
+
+.process-button {
+  padding: 8px 16px;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  background-color: #52c41a;
+  margin-left: 10px;
+}
+
+.process-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.process-button:enabled:hover {
+  background-color: #73d13d;
 } 
