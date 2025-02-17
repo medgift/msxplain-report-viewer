@@ -12,12 +12,21 @@ import numpy as np
 from io import BytesIO
 from PIL import Image
 import pydicom
-from typing import List
+from typing import List, Dict
 import shutil
 import asyncio
 from msxplain.msxplain_report import MSXplainReport
+from fastapi.background import BackgroundTasks
+from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
+
+# Global variable to store processing status
+processing_status: Dict[str, dict] = {}
+
+# Define constants for file paths
+UPLOAD_FOLDER = "files/uploads"
+PROCESSED_FOLDER = "files/processed"
 
 # Add CORS middleware
 app.add_middleware(
@@ -29,8 +38,11 @@ app.add_middleware(
 )
 
 # Create necessary directories
-os.makedirs("files/uploads", exist_ok=True)
-os.makedirs("files/processed", exist_ok=True)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+# Create a thread pool executor
+thread_pool = ThreadPoolExecutor(max_workers=4)
 
 def sanitize_data(data):
     # Recursively check the data and replace invalid values
@@ -298,46 +310,59 @@ async def get_slice(patient_name: str, slice_num: int, show_false_positives: boo
         )
         
 @app.post("/api/upload-dicoms")
-async def upload_dicoms(
-    flair_files: List[UploadFile] = File(...),
-    t1_files: List[UploadFile] = File(...)
-):
+async def upload_dicoms(files: List[UploadFile] = File(...)):
     try:
-        # Generate unique patient ID
-        patient_id = f"patient_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Generate unique run ID
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        base_dir = os.path.join(UPLOAD_FOLDER, run_id)
         
-        # Create base directories
-        base_dir = os.path.join("files", "uploads", patient_id)
-        flair_dir = os.path.join(base_dir, "flair")
-        t1_dir = os.path.join(base_dir, "t1")
+        # Create base directory
+        os.makedirs(base_dir, exist_ok=True)
         
-        # Create directories if they don't exist
-        os.makedirs(flair_dir, exist_ok=True)
-        os.makedirs(t1_dir, exist_ok=True)
-        
-        # Save FLAIR files
-        for file in flair_files:
-            filename = os.path.basename(file.filename)
-            file_path = os.path.join(flair_dir, filename)
+        # Save all files maintaining their structure
+        for file in files:
+            # Get the full path from the filename (includes patient/session/modality structure)
+            file_path = os.path.join(base_dir, file.filename)
+            
+            # Create directories if they don't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # Save the file
             content = await file.read()
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
+        
+        # Get list of patient directories
+        patient_dirs = [d for d in os.listdir(base_dir) 
+                       if os.path.isdir(os.path.join(base_dir, d))]
+        
+        # Process each patient and their sessions
+        for patient_dir in patient_dirs:
+            patient_path = os.path.join(base_dir, patient_dir)
+            session_dirs = [d for d in os.listdir(patient_path)
+                          if os.path.isdir(os.path.join(patient_path, d))]
+            
+            # Process each session for this patient
+            for session_dir in session_dirs:
+                session_path = os.path.join(patient_path, session_dir)
+                flair_dir = os.path.join(session_path, "flair")
+                t1_dir = os.path.join(session_path, "t1")
                 
-        # Save T1 files
-        for file in t1_files:
-            filename = os.path.basename(file.filename)
-            file_path = os.path.join(t1_dir, filename)
-            content = await file.read()
-            with open(file_path, "wb") as buffer:
-                buffer.write(content)
-        
-        # Start processing pipeline
-        process_task = asyncio.create_task(process_scans(patient_id))
+                # Verify that both flair and t1 directories exist
+                if os.path.exists(flair_dir) and os.path.exists(t1_dir):
+                    # Create a unique ID for this patient-session combination
+                    session_id = f"{patient_dir}_{session_dir}"
+                    
+                    # Start processing pipeline for this session
+                    process_task = asyncio.create_task(
+                        process_scans(run_id, session_id, [flair_dir, t1_dir])
+                    )
         
         return JSONResponse(
             content={
-                "message": "Files uploaded successfully. Processing started.",
-                "patient_id": patient_id
+                "message": f"Files uploaded successfully. Processing started for {len(patient_dirs)} patients.",
+                "run_id": run_id,
+                "patients": patient_dirs
             },
             status_code=200
         )
@@ -363,70 +388,225 @@ def validate_dicoms(directory):
         print(f"DICOM validation error: {str(e)}")
         return False
 
-async def process_scans(patient_id):
-    """Process both FLAIR and T1 scans using MSXplain pipeline"""
+@app.post("/api/process-scans/{run_id}")
+async def start_processing(run_id: str):
     try:
-        # Define directories
-        base_dir = f"files/uploads/{patient_id}"
-        output_dir = f"files/processed/{patient_id}"
-        flair_dir = f"{base_dir}/flair"
-        t1_dir = f"{base_dir}/t1"
+        base_dir = os.path.join(UPLOAD_FOLDER, run_id)
         
-        # Create output directory
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Create progress marker
-        with open(f"{output_dir}/preprocessing_started", "w") as f:
-            f.write("")
-
-        # Initialize MSXplain Report Generator
-        msxplain = MSXplainReport(
-            flair_dir=flair_dir,
-            t1_dir=t1_dir,
-            output_dir=output_dir
-        )
+        if not os.path.exists(base_dir):
+            return JSONResponse({
+                'error': f"Upload directory not found: {run_id}"
+            }, status_code=404)
         
-        # Run the complete pipeline
-        success = msxplain.run()
+        # Look for DICOMS directory first
+        dicoms_dir = os.path.join(base_dir, "DICOMS")
+        if not os.path.exists(dicoms_dir):
+            return JSONResponse({
+                'error': "DICOMS directory not found"
+            }, status_code=400)
         
-        if success:
-            # Mark processing complete
-            with open(f"{output_dir}/report_complete", "w") as f:
-                f.write("")
-            print(f"Processing completed for {patient_id}")
-            return True
-        else:
-            raise Exception("MSXplain pipeline failed")
-
-    except Exception as e:
-        print(f"Error in processing: {str(e)}")
-        traceback.print_exc()
-        return False
-
-@app.get("/api/process-status/{patient_id}")
-async def get_process_status(patient_id: str):
-    try:
-        output_dir = os.path.join(PROCESSED_DIR, patient_id)
+        # Get patient directories inside DICOMS folder
+        patient_dirs = []
+        for item in os.listdir(dicoms_dir):
+            if item.startswith("4031-"):  # Pattern for patient directories
+                item_path = os.path.join(dicoms_dir, item)
+                if os.path.isdir(item_path):
+                    patient_dirs.append(item)
         
-        # Check for various milestone files to determine progress
-        status = {
-            "preprocessing": os.path.exists(f"{output_dir}/preprocessing_complete"),
-            "msxplain": os.path.exists(f"{output_dir}/msxplain_complete"),
-            "report": os.path.exists(f"{output_dir}/report_complete")
+        if not patient_dirs:
+            return JSONResponse({
+                'error': "No patient directories found"
+            }, status_code=400)
+        
+        print(f"Found {len(patient_dirs)} patient directories: {patient_dirs}")
+        
+        # Initialize processing status for all patients
+        processing_status[run_id] = {
+            'patients': {
+                patient_dir: {
+                    'status': 'pending',
+                    'steps': {
+                        'preprocessing': 'pending',
+                        'msxplain': 'pending',
+                        'report': 'pending'
+                    }
+                }
+                for patient_dir in patient_dirs
+            }
         }
         
-        return status
+        # Start processing in background
+        asyncio.create_task(process_all_patients(run_id, dicoms_dir, patient_dirs))
+        
+        return JSONResponse({
+            'message': f"Processing started for {len(patient_dirs)} patients",
+            'patients': patient_dirs
+        })
+        
     except Exception as e:
+        print(f"Error starting processing: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse({
+            'error': str(e)
+        }, status_code=500)
+
+async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
+    """Process all patients sequentially with progress updates"""
+    try:
+        print(f"\nStarting processing for run {run_id}")
+        print(f"Will process these patients in order: {patient_dirs}")
+        
+        for i, patient_dir in enumerate(patient_dirs):
+            try:
+                # Update status to processing
+                status = processing_status[run_id]['patients'][patient_dir]
+                status['status'] = 'processing'
+                
+                # Notify progress update
+                await notify_progress(run_id)
+                
+                print(f"\n[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
+                patient_path = os.path.join(base_dir, patient_dir)
+                
+                # Find FLAIR and T1 directories
+                flair_dir = None
+                t1_dir = None
+                
+                print(f"Searching for FLAIR and T1 in: {patient_path}")
+                for root, dirs, files in os.walk(patient_path):
+                    dir_name = os.path.basename(root).lower()
+                    if 'flair' in dir_name and not flair_dir:
+                        flair_dir = root
+                        print(f"Found FLAIR directory: {flair_dir}")
+                    elif 't1' in dir_name and not t1_dir:
+                        t1_dir = root
+                        print(f"Found T1 directory: {t1_dir}")
+                    if flair_dir and t1_dir:
+                        break
+                
+                if not flair_dir or not t1_dir:
+                    raise ValueError(f"Could not find FLAIR and T1 directories in {patient_path}")
+                
+                # Initialize MSXplainReport with unique output directory for each patient
+                patient_output_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_dir)
+                os.makedirs(patient_output_dir, exist_ok=True)
+                
+                print(f"Created output directory: {patient_output_dir}")
+                
+                msxplain = MSXplainReport(
+                    flair_dir=flair_dir,
+                    t1_dir=t1_dir,
+                    output_dir=patient_output_dir
+                )
+                
+                # Preprocessing step
+                print(f"Starting preprocessing for {patient_dir}")
+                status['steps']['preprocessing'] = 'processing'
+                await notify_progress(run_id)
+                
+                nifti_files = msxplain.convert_dicoms_to_nifti()
+                preprocessed_files = msxplain.preprocess_images(nifti_files)
+                
+                status['steps']['preprocessing'] = 'completed'
+                await notify_progress(run_id)
+                print(f"Completed preprocessing for {patient_dir}")
+                
+                # MSXplain step
+                print(f"Starting MSXplain for {patient_dir}")
+                status['steps']['msxplain'] = 'processing'
+                await notify_progress(run_id)
+                
+                prediction_file = msxplain.run_msxplain(preprocessed_files)
+                
+                if not os.path.exists(prediction_file):
+                    raise ValueError(f"MSXplain failed to generate prediction for {patient_dir}")
+                
+                status['steps']['msxplain'] = 'completed'
+                await notify_progress(run_id)
+                print(f"Completed MSXplain for {patient_dir}")
+                
+                # Report generation step
+                print(f"Starting report generation for {patient_dir}")
+                status['steps']['report'] = 'processing'
+                await notify_progress(run_id)
+                
+                # Generate report
+                report_df = msxplain.generate_report(prediction_file)
+                
+                # Save report to Excel file
+                report_path = os.path.join(patient_output_dir, f"report_4031-{msxplain.patient_id}.xlsx")
+                report_df.to_excel(report_path, index=False)
+                
+                if not os.path.exists(report_path):
+                    raise ValueError(f"Failed to save report for {patient_dir}")
+                
+                status['steps']['report'] = 'completed'
+                await notify_progress(run_id)
+                print(f"Completed report generation for {patient_dir}")
+                
+                # Mark patient as completed
+                status['status'] = 'completed'
+                await notify_progress(run_id)
+                print(f"Completed all processing for patient {patient_dir} [{i+1}/{len(patient_dirs)}]")
+                
+            except Exception as e:
+                print(f"Error processing patient {patient_dir}: {str(e)}")
+                traceback.print_exc()
+                status['status'] = 'error'
+                for step in status['steps']:
+                    if status['steps'][step] == 'processing':
+                        status['steps'][step] = 'error'
+                await notify_progress(run_id)
+        
+        print(f"\nAll processing completed for run {run_id}")
+        print("Final status:")
+        for patient, status in processing_status[run_id]['patients'].items():
+            print(f"- {patient}: {status['status']}")
+        
+    except Exception as e:
+        print(f"Error in process_all_patients: {str(e)}")
+        traceback.print_exc()
+
+async def notify_progress(run_id: str):
+    """Notify progress to connected clients"""
+    try:
+        # Add a small delay to allow status updates to propagate
+        await asyncio.sleep(0.1)
+    except Exception as e:
+        print(f"Error in notify_progress: {str(e)}")
+
+@app.get("/api/process-status/{run_id}")
+async def get_processing_status(run_id: str):
+    try:
+        if run_id not in processing_status:
+            return JSONResponse({
+                'error': f"No status found for run {run_id}"
+            }, status_code=404)
+            
+        status_info = processing_status[run_id]
+        print(f"Status for run {run_id}:", status_info)
+        
         return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
+            content=status_info,
+            headers={
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
         )
+        
+    except Exception as e:
+        print(f"Error checking status: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse({
+            'error': str(e)
+        }, status_code=500)
 
 @app.get("/api/patients")
 async def get_patients():
     try:
         # Get list of processed patient directories
-        processed_dir = "files/processed"
+        processed_dir = PROCESSED_FOLDER
         if not os.path.exists(processed_dir):
             return []
             

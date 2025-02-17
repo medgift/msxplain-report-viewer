@@ -2,6 +2,7 @@ import os
 import subprocess
 import traceback
 
+
 def run_samseg_processing(patient_dir, t1_path, pred_path):
     """Run SAMSEG processing pipeline using FreeSurfer and FSL
     
@@ -10,6 +11,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
         t1_path (str): Path to T1 image
         pred_path (str): Path to prediction mask
     """
+
     try:
         print("Starting SAMSEG processing...")
         samseg_dir = os.path.join(patient_dir, "SAMSEG")
@@ -21,7 +23,9 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "--input", t1_path,
             "--output", samseg_dir,
             "--threads", "2"
-        ], check=True)
+        ],
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 2. Convert MGZ to NIFTI
         print("Converting MGZ to NIFTI...")
@@ -29,7 +33,9 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "mri_convert",
             os.path.join(samseg_dir, "seg.mgz"),
             os.path.join(samseg_dir, "seg.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 3. Create individual structure masks
         print("Creating structure masks...")
@@ -55,7 +61,9 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                 "-thr", str(lower),
                 "-uthr", str(upper),
                 os.path.join(samseg_dir, f"{name}.nii.gz")
-            ], check=True)
+            ], 
+                           stdout=subprocess.DEVNULL,
+                           check=True)
         
         # 4. Create WM mask
         print("Creating WM mask...")
@@ -65,13 +73,17 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "-add",
             os.path.join(samseg_dir, "RightWM.nii.gz"),
             os.path.join(samseg_dir, "WM_Mask.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "WM_Mask.nii.gz"),
             "-bin",
             os.path.join(samseg_dir, "WM_Mask.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 5. Create Cortex mask
         print("Creating Cortex mask...")
@@ -81,27 +93,35 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "-add",
             os.path.join(samseg_dir, "RightCerebralCortex.nii.gz"),
             os.path.join(samseg_dir, "CerebralCortex.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "CerebralCortex.nii.gz"),
             "-bin",
             os.path.join(samseg_dir, "CerebralCortex.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "CerebralCortex.nii.gz"),
             "-mul",
             pred_path,
             os.path.join(samseg_dir, "common.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "CerebralCortex.nii.gz"),
             "-sub",
             os.path.join(samseg_dir, "common.nii.gz"),
             os.path.join(samseg_dir, "Cortex.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 6. Create Ventricles mask
         print("Creating Ventricles mask...")
@@ -111,27 +131,35 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "-add",
             os.path.join(samseg_dir, "RightLateralVentricle.nii.gz"),
             os.path.join(samseg_dir, "LateralVentricles.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LateralVentricles.nii.gz"),
             "-bin",
             os.path.join(samseg_dir, "LateralVentricles.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LateralVentricles.nii.gz"),
             "-mul",
             pred_path,
             os.path.join(samseg_dir, "common2.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LateralVentricles.nii.gz"),
             "-sub",
             os.path.join(samseg_dir, "common2.nii.gz"),
             os.path.join(samseg_dir, "Ventricles.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 7. Create Infratentorial mask
         print("Creating Infratentorial mask...")
@@ -143,13 +171,17 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "-add",
             os.path.join(samseg_dir, "RightCerebellumWM.nii.gz"),
             os.path.join(samseg_dir, "Infratentorial.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "Infratentorial.nii.gz"),
             "-bin",
             os.path.join(samseg_dir, "Infratentorial.nii.gz")
-        ], check=True)
+        ], 
+                       stdout=subprocess.DEVNULL,
+                       check=True)
         
         # 8. Clean up temporary files
         print("Cleaning up temporary files...")

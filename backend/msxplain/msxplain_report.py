@@ -10,6 +10,7 @@ import glob
 fsl_dir = "/home/lluis/msxplain/fsl"
 os.environ["FSLDIR"] = fsl_dir
 os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
+os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
 
 freesurfer_home = "/home/lluis/msxplain/freesurfer_7.4.1"
 os.environ["FREESURFER_HOME"] = freesurfer_home
