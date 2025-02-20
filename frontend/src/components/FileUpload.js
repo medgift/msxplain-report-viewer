@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import './FileUpload.css';
 import { Progress, Button } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 const FileUpload = () => {
   console.log('FileUpload component rendered');
@@ -207,6 +206,10 @@ const FileUpload = () => {
 
   return (
     <div className="upload-container">
+      <div className="navigation-header">
+        <Link to="/" className="back-button">← Back to Home</Link>
+        <h2>Upload Patient Data</h2>
+      </div>
       <div className="upload-header">
         <h2>Upload Patient Data</h2>
         <p className="upload-instructions">

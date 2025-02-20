@@ -1,6 +1,6 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import InputPage from "./InputPage";    // Page for entering patient name
+import HomePage from "./HomePage";    // Page for entering patient name
 import ReportPage from "./ReportPage";  // Page with report and button
 import Viewer from "./Viewer";           // Page with 3D image navigation
 import FileUpload from "./components/FileUpload";
@@ -12,7 +12,7 @@ const App = () => {
     <Router>
       <Routes>
         {/* Initial page for entering patient name */}
-        <Route path="/" element={<InputPage />} />
+        <Route path="/" element={<HomePage />} />
         <Route path="/upload" element={<FileUpload />} />
         <Route path="/patients" element={<PatientList />} />
         {/* Page showing the report */}

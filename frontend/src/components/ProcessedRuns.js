@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import './ProcessedRuns.css';
 
@@ -28,7 +28,10 @@ const ProcessedRuns = () => {
 
   return (
     <div className="processed-runs">
-      <h2>Processed Runs</h2>
+      <div className="navigation-header">
+        <Link to="/" className="back-button">← Back to Home</Link>
+        <h2>Processed Runs</h2>
+      </div>
       
       {error && <div className="error-message">{error}</div>}
       

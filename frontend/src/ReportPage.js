@@ -48,22 +48,23 @@ const ReportPage = () => {
 
   return (
     <div className="report-container">
+      <div className="navigation-header">
+        <Link to="/processed-runs" className="back-button">← Back to Reports</Link>
+        <h1>MSXplain Report</h1>
+      </div>
       <header className="report-header">
         <h1>MSXplain Report</h1>
         <div className="header-actions">
           <Link to={`/viewer/${run_id}/${patient_name}`} className="view-3d-button">
-            View 3D Image
+            Visualize Lesion Map
           </Link>
-          <button 
-            onClick={openMcDonaldCriteria} 
-            className="action-button criteria-button"
-          >
-            McDonald Criteria
+          <button onClick={openMcDonaldCriteria} className="view-3d-button">
+            📋 McDonald Criteria
           </button>
         </div>
       </header>
 
-      <div className="patient-input">
+      {/* <div className="patient-input">
         <textarea
           value={patientName}
           onChange={(e) => setPatientName(e.target.value)}
@@ -77,7 +78,7 @@ const ReportPage = () => {
           <div className="loading-spinner"></div>
           <p>Loading report...</p>
         </div>
-      )}
+      )} */}
 
       {error && <div className="error-message">{error}</div>}
 
