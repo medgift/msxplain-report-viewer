@@ -3,8 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import axios from "axios";
 import './styles.css';
 
-const ThreeDImagePage = () => {
-  const { patient_name } = useParams(); // Obtener patient_name de los parámetros de la URL
+const Viewer = () => {
+  const { run_id, patient_name } = useParams();
   const [sliceNum, setSliceNum] = useState(0);
   const [displayedSlice, setDisplayedSlice] = useState(0);
   const [imageData, setImageData] = useState(null);
@@ -19,14 +19,16 @@ const ThreeDImagePage = () => {
   useEffect(() => {
     const fetchTotalLesions = async () => {
       try {
-        const response = await axios.get(`http://127.0.0.1:5000/api/total_lesions/${patient_name}`);
+        const response = await fetch(
+          `http://localhost:5000/api/total_lesions/${run_id}/${patient_name}`
+        );
         setLesionCounts(response.data);
       } catch (error) {
         console.error("Error fetching lesion info:", error);
       }
     };
     fetchTotalLesions();
-  }, [patient_name]);
+  }, [run_id, patient_name]);
 
   // Color mapping for the legend - matching backend colors exactly
   const lesionColors = {
@@ -84,22 +86,18 @@ const ThreeDImagePage = () => {
         timeoutId = setTimeout(async () => {
           setLoading(true);
           try {
-            const response = await axios.get(
-              `http://127.0.0.1:5000/api/slice/${patient_name}/${sliceNumber}`,
-              {
-                params: { show_false_positives: showFalsePositives },
-                responseType: 'arraybuffer'
-              }
+            const response = await fetch(
+              `http://localhost:5000/api/slice/${run_id}/${patient_name}/${sliceNumber}?show_false_positives=${showFalsePositives}`
             );
             
             // Update max slice number from headers if available
-            const totalSlices = response.headers['x-total-slices'];
+            const totalSlices = response.headers.get('x-total-slices');
             if (totalSlices) {
               setMaxSlice(parseInt(totalSlices) - 1);
             }
             
             const base64 = btoa(
-              new Uint8Array(response.data)
+              new Uint8Array(await response.arrayBuffer())
                 .reduce((data, byte) => data + String.fromCharCode(byte), '')
             );
             
@@ -116,7 +114,7 @@ const ThreeDImagePage = () => {
         }, 300);
       };
     })(),
-    [showFalsePositives, patient_name]
+    [showFalsePositives, run_id, patient_name]
   );
 
   // Effect to load the image when sliceNum changes
@@ -214,4 +212,4 @@ const ThreeDImagePage = () => {
   );
 };
 
-export default ThreeDImagePage;
+export default Viewer;

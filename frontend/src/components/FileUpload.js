@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './FileUpload.css';
 import { Progress, Button } from 'antd';
+import { useNavigate } from 'react-router-dom';
 
 const FileUpload = () => {
   console.log('FileUpload component rendered');
@@ -16,6 +17,7 @@ const FileUpload = () => {
   const [progress, setProgress] = useState({});
   const [error, setError] = useState(null);
   const [reportPath, setReportPath] = useState(null);
+  const navigate = useNavigate();
 
   const getProgressPercent = (step) => {
     if (!step) return 0;
@@ -25,6 +27,24 @@ const FileUpload = () => {
       case 'completed': return 100;
       default: return 0;
     }
+  };
+
+  const isProcessingComplete = () => {
+    if (!processingStatus.patients || Object.keys(processingStatus.patients).length === 0) return false;
+    
+    return Object.values(processingStatus.patients).every(patient => 
+      patient.steps &&
+      patient.steps.preprocessing === 'completed' &&
+      patient.steps.msxplain === 'completed' &&
+      patient.steps.report === 'completed'
+    );
+  };
+
+  const hasProcessingStarted = () => {
+    if (!processing || !uploadComplete) return false;
+    return Object.values(processingStatus.patients || {}).some(patient => 
+      patient.steps && Object.values(patient.steps).some(step => step === 'completed')
+    );
   };
 
   useEffect(() => {
@@ -37,12 +57,15 @@ const FileUpload = () => {
           setProcessingStatus(data);
           
           // Check if all patients are completed
-          const allCompleted = Object.values(data.patients).every(
-            patient => patient.status === 'completed' || patient.status === 'error'
+          const allCompleted = Object.values(data.patients).every(patient => 
+            patient.steps &&
+            patient.steps.preprocessing === 'completed' &&
+            patient.steps.msxplain === 'completed' &&
+            patient.steps.report === 'completed'
           );
           
           if (allCompleted) {
-            setProcessing(false);
+            // Don't set processing to false when complete
             clearInterval(intervalId);
           }
         } catch (error) {
@@ -73,7 +96,14 @@ const FileUpload = () => {
     const formData = new FormData();
     
     // Add each file to formData maintaining their relative paths
+    const patientFolders = new Set();
     Array.from(selectedFolder).forEach(file => {
+      // Extract patient ID from file path (second level folder)
+      const pathParts = file.webkitRelativePath.split('/');
+      if (pathParts.length > 1) {
+        const patientId = pathParts[1]; // Get the patient folder name
+        patientFolders.add(patientId);
+      }
       formData.append('files', file, file.webkitRelativePath);
     });
 
@@ -89,6 +119,24 @@ const FileUpload = () => {
       
       const data = await response.json();
       setRunId(data.run_id);
+      
+      // Initialize progress status for each patient folder
+      const initialStatus = {
+        patients: {}
+      };
+      patientFolders.forEach(patientId => {
+        if (patientId) { // Only add if patientId exists
+          initialStatus.patients[patientId] = {
+            steps: {
+              preprocessing: 'pending',
+              msxplain: 'pending',
+              report: 'pending'
+            }
+          };
+        }
+      });
+      setProcessingStatus(initialStatus);
+      
       setUploadComplete(true);
     } catch (error) {
       console.error('Error uploading:', error);
@@ -118,16 +166,43 @@ const FileUpload = () => {
       
       const data = await response.json();
       console.log('Processing started:', data);
-      setProcessingStatus(data);
+      
+      // Keep checking status until processing is complete
+      const statusCheckInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`http://localhost:5000/api/process-status/${runId}`);
+          const statusData = await statusResponse.json();
+          setProcessingStatus(statusData);
+
+          // Check if all processing is complete
+          const allComplete = Object.values(statusData.patients).every(
+            patient => patient.steps.preprocessing === 'completed' &&
+                      patient.steps.msxplain === 'completed' &&
+                      patient.steps.report === 'completed'
+          );
+
+          if (allComplete) {
+            clearInterval(statusCheckInterval);
+            // Keep processing true to maintain the completion message
+            // Don't reset processing status
+          }
+        } catch (error) {
+          console.error('Error checking status:', error);
+          clearInterval(statusCheckInterval);
+          setError('Error checking processing status');
+          setProcessing(false);
+        }
+      }, 2000);
+
     } catch (error) {
       console.error('Error starting processing:', error);
       setProcessing(false);
+      setError(error.message);
     }
   };
 
   const handleViewReport = () => {
-    // Implement report viewing logic here
-    window.open(`/api/view-report/${runId}`, '_blank');
+        navigate('/processed-runs');
   };
 
   return (
@@ -139,35 +214,38 @@ const FileUpload = () => {
         </p>
       </div>
       
-      <div className="upload-controls">
-        <input
-          type="file"
-          webkitdirectory="true"
-          directory="true"
-          onChange={handleFolderSelect}
-          className="file-input"
-        />
-        <button
-          onClick={handleUpload}
-          disabled={uploading || !selectedFolder}
-          className="upload-button"
-        >
-          {uploading ? 'Uploading...' : 'Upload Folder'}
-        </button>
-        {uploadComplete && (
-          <button
-            onClick={handleProcess}
+      {(!processing || !isProcessingComplete()) && (
+        <div className="upload-controls">
+          <input
+            type="file"
+            webkitdirectory="true"
+            directory="true"
+            onChange={handleFolderSelect}
+            className="file-input"
             disabled={processing}
-            className="process-button"
+          />
+          <button
+            onClick={handleUpload}
+            disabled={uploading || !selectedFolder || processing}
+            className="upload-button"
           >
-            {processing ? 'Processing...' : 'Process Files'}
+            {uploading ? 'Uploading...' : 'Upload Folder'}
           </button>
-        )}
-      </div>
+          {uploadComplete && !processing && (
+            <button
+              onClick={handleProcess}
+              disabled={processing}
+              className="process-button"
+            >
+              Process Files
+            </button>
+          )}
+        </div>
+      )}
 
       {error && <div className="error-message">{error}</div>}
 
-      {runId && Object.entries(processingStatus.patients || {}).map(([patientId, status]) => (
+      {processing && !isProcessingComplete() && Object.entries(processingStatus.patients || {}).map(([patientId, status]) => (
         <div key={patientId} className="patient-container">
           <div className="patient-header">
             <h3>Patient: {patientId}</h3>
@@ -209,17 +287,20 @@ const FileUpload = () => {
         </div>
       ))}
 
-      {runId && (
-        <Button
-          type="primary"
-          onClick={handleViewReport}
-          style={{ marginTop: '10px' }}
-        >
-          View Report
-        </Button>
+      {processing && isProcessingComplete() && (
+        <div className="completion-message">
+          <p>Processing completed successfully!</p>
+          <Button
+            type="primary"
+            onClick={handleViewReport}
+            style={{ marginTop: '10px' }}
+          >
+            View Report
+          </Button>
+        </div>
       )}
     </div>
   );
 };
 
-export default FileUpload; 
+export default FileUpload;

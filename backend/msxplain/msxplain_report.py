@@ -28,15 +28,15 @@ class MSXplainReport:
             flair_dir (str): Directory containing FLAIR DICOM series
             t1_dir (str): Directory containing T1 DICOM series
             output_dir (str): Directory where to save results
-        """
+"""
         self.flair_dir = flair_dir
         self.t1_dir = t1_dir
         
         # Get patient ID from DICOM metadata
         self.patient_id = self.get_patient_id()
         
-        # Update output directory with patient ID
-        self.output_dir = os.path.join(output_dir, self.patient_id)
+        # Don't append patient_id here since output_dir already includes it
+        self.output_dir = output_dir
         
         # Create output directories
         os.makedirs(self.output_dir, exist_ok=True)
@@ -248,4 +248,4 @@ class MSXplainReport:
         except Exception as e:
             print(f"Error in MSXplain pipeline: {str(e)}")
             traceback.print_exc()
-            return False 
+            return False

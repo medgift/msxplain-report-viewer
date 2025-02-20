@@ -10,7 +10,7 @@ const InputPage = () => {
         <Link to="/upload" className="action-button">
           Upload New Patient Scans
         </Link>
-        <Link to="/patients" className="action-button">
+        <Link to="/processed-runs" className="action-button">
           View Existing Reports
         </Link>
       </div>

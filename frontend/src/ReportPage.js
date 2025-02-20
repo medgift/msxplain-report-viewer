@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import './styles.css';
 
 const ReportPage = () => {
-  const { patient_name } = useParams(); // Get patient_name from URL parameters
+  const { run_id, patient_name } = useParams(); // Get run_id and patient_name from URL parameters
   const [patientName, setPatientName] = useState(patient_name || ''); // Initialize state with patient_name from URL or empty string
   const [reportData, setReportData] = useState(null);
   const [error, setError] = useState(null);
@@ -11,11 +11,16 @@ const ReportPage = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (patient_name) {
+    if (run_id && patient_name) {
       setLoading(true);
       setError(null); // Clear previous error
-      fetch(`http://127.0.0.1:5000/api/report/${patient_name}`)
-        .then((response) => response.json())
+      fetch(`http://127.0.0.1:5000/api/report/${run_id}/${patient_name}`)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Report not found');
+          }
+          return response.json();
+        })
         .then((data) => {
           if (data.error) {
             setError(data.error); // Handle error from backend
@@ -25,14 +30,20 @@ const ReportPage = () => {
           setLoading(false); // Set loading to false after data is fetched
         })
         .catch((err) => {
-          setError('Error connecting to the server'); // Handle network errors
+          setError('Error loading report: ' + err.message); // Handle network errors
           setLoading(false);
         });
     }
-  }, [patient_name]);
+  }, [run_id, patient_name]);
 
   const openMcDonaldCriteria = () => {
     window.open('/files/2017-McDonald-Criteria-PDF.pdf', '_blank');
+  };
+
+  const handleLoadReport = () => {
+    if (run_id) {
+      navigate(`/report/${run_id}/${patientName}`);
+    }
   };
 
   return (
@@ -40,7 +51,7 @@ const ReportPage = () => {
       <header className="report-header">
         <h1>MSXplain Report</h1>
         <div className="header-actions">
-          <Link to={`/viewer/${patient_name}`} className="view-3d-button">
+          <Link to={`/viewer/${run_id}/${patient_name}`} className="view-3d-button">
             View 3D Image
           </Link>
           <button 
@@ -58,7 +69,7 @@ const ReportPage = () => {
           onChange={(e) => setPatientName(e.target.value)}
           placeholder="Enter patient name"
         />
-        <button onClick={() => navigate(`/report/${patientName}`)}>Load Report</button>
+        <button onClick={handleLoadReport}>Load Report</button>
       </div>
 
       {loading && (
