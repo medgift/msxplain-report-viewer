@@ -188,29 +188,29 @@ def form_cluster(data_array:np.array, struct:np.array=np.ones([3, 3, 3])):
 # minutes, seconds = divmod(remainder, 60)   
 # print(f"======= Elapsed time: {int(hours)} hours, {int(minutes)} minutes, {seconds:.2f} seconds")
 
-def get_transforms(input_keys):
-    """Get transforms for data preprocessing"""
-    return Compose([
-        LoadImaged(keys=input_keys),
-        AddChanneld(keys=input_keys),
-        NormalizeIntensityd(keys=input_keys),
-        ConcatItemsd(keys=input_keys, name="inputs"),
-        SelectItemsd(keys=["inputs"]),
-        ToTensord(keys=["inputs"])
-    ])
+# def get_transforms(input_keys):
+#     """Get transforms for data preprocessing"""
+#     return Compose([
+#         LoadImaged(keys=input_keys),
+#         AddChanneld(keys=input_keys),
+#         NormalizeIntensityd(keys=input_keys),
+#         ConcatItemsd(keys=input_keys, name="inputs"),
+#         SelectItemsd(keys=["inputs"]),
+#         ToTensord(keys=["inputs"])
+#     ])
 
-def get_valnotarget_transforms(input_keys, seed=1):
-    """Get validation transforms for data without target masks"""
-    transforms = Compose([
-        LoadImaged(keys=input_keys),
-        AddChanneld(keys=input_keys),
-        NormalizeIntensityd(keys=input_keys),
-        ConcatItemsd(keys=input_keys, name="inputs"),
-        SelectItemsd(keys=["inputs"]),
-        ToTensord(keys=["inputs"])
-    ])
-    transforms.set_random_state(seed=seed)
-    return transforms
+# def get_valnotarget_transforms(input_keys, seed=1):
+#     """Get validation transforms for data without target masks"""
+#     transforms = Compose([
+#         LoadImaged(keys=input_keys),
+#         AddChanneld(keys=input_keys),
+#         NormalizeIntensityd(keys=input_keys),
+#         ConcatItemsd(keys=input_keys, name="inputs"),
+#         SelectItemsd(keys=["inputs"]),
+#         ToTensord(keys=["inputs"])
+#     ])
+#     transforms.set_random_state(seed=seed)
+#     return transforms
 
 def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=True):
     """Run MSXplain prediction
@@ -286,7 +286,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         
         # Prepare dataset
         print("Preparing dataset...")
-        val_transforms = get_valnotarget_transforms(input_keys=input_modalities, seed=seed)
+        val_transforms = get_valnotarget_transforms(input_keys=input_modalities).set_random_state(seed=seed)
         val_dataset = NiftinotargetDataset(
             input_paths=input_val_paths,
             input_prefixes=input_prefixes,

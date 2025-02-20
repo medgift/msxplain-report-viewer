@@ -137,4 +137,12 @@
 
 .process-button:enabled:hover {
   background-color: #73d13d;
-} 
+}
+
+.completion-message {
+  text-align: center;
+  margin: 2rem;
+  padding: 2rem;
+  background-color: #f0f8ff;
+  border-radius: 8px;
+}

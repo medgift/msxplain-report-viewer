@@ -79,23 +79,30 @@ def format_birth_date(date_str):
         return "Unknown"
 
 # Route to get data from the Excel file
-@app.get("/api/report/{patient_name}")          
-async def get_report(patient_name: str):
+@app.get("/api/report/{run_id}/{patient_name}")          
+async def get_report(run_id: str, patient_name: str):
     try:
-        file_path = f"files/report_4031-{patient_name}.xlsx"  # Path to your file
+        # Construct the correct file path using run_id
+        file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report_{patient_name}.xlsx")
+        
+        print(f"Looking for report at: {file_path}")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Report file not found: {file_path}")
+            
         df = pd.read_excel(file_path)
         
         # Clean data
         sanitized_data = sanitize_data(df.to_dict(orient="records"))
         
         # Initialize variables
-        lesion_counts = df['Lesion Type'].value_counts().to_dict()  # Counts by lesion type
+        lesion_counts = df['Lesion Type'].value_counts().to_dict()
         lesion_voxels_sum = df.loc[df['Lesion Type'] != 'False Positive', 'Lesion Voxels'].sum()
         lesion_volume_sum = df.loc[df['Lesion Type'] != 'False Positive', 'Lesion Volume'].sum()
         
         # Convert data to native Python types
         lesion_counts = convert_numpy_types(lesion_counts)
-        lesion_volume_sum = float(lesion_volume_sum) # Ensure it is a native float
+        lesion_volume_sum = float(lesion_volume_sum)
     
         # Extract lesion numbers
         false_positives = lesion_counts.get('False Positive', 0)
@@ -104,25 +111,35 @@ async def get_report(patient_name: str):
         infratentorial_lesions = lesion_counts.get('Infratentorial', 0)
         wm_lesions = lesion_counts.get('Deep White Matter', 0)
         
-        # Load DICOM file and extract metadata
-        dicom_base_folder = f"files/DICOMS/4031-{patient_name}/"
-        dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
-        dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder)) if 'flair' in f.lower()), None)
-        if dicom_date_folder and dicom_flair_folder:
-            dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
-            dicom_files = [f for f in os.listdir(dicom_folder)]
-            if dicom_files:
-                dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
-                dicom_data = pydicom.dcmread(dicom_file_path)
-                patient_name = str(dicom_data.PatientName)
-                patient_id = str(dicom_data.PatientID)
-                patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
-                patient_sex = str(dicom_data.PatientSex)
-            else:
-                patient_name = patient_id = patient_birth_date = patient_sex = None
-        else:
-            patient_name = patient_id = patient_birth_date = patient_sex = None
+        # Load DICOM file and extract metadata from the uploaded folder
+        dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, "DICOMS", patient_name)
         
+        try:
+            dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) 
+                                    if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
+            if dicom_date_folder:
+                dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder)) 
+                                         if 'flair' in f.lower()), None)
+                if dicom_flair_folder:
+                    dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
+                    dicom_files = [f for f in os.listdir(dicom_folder)]
+                    if dicom_files:
+                        dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
+                        dicom_data = pydicom.dcmread(dicom_file_path)
+                        patient_name = str(dicom_data.PatientName)
+                        patient_id = str(dicom_data.PatientID)
+                        patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
+                        patient_sex = str(dicom_data.PatientSex)
+                    else:
+                        patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
+                else:
+                    patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
+            else:
+                patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
+        except Exception as e:
+            print(f"Error reading DICOM metadata: {str(e)}")
+            patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
+
         # Check if McDonald Criteria is fulfilled
         lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
         affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
@@ -158,11 +175,16 @@ async def get_report(patient_name: str):
             status_code=500
         )
 
-@app.get("/api/total_lesions/{patient_name}")
-async def get_total_lesions(patient_name: str):
+@app.get("/api/total_lesions/{run_id}/{patient_name}")
+async def get_total_lesions(run_id: str, patient_name: str):
     try:
-        # Load report data
-        report_df = pd.read_excel(f"files/report_4031-{patient_name}.xlsx")
+        # Construct the correct path
+        report_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report_{patient_name}.xlsx")
+        
+        if not os.path.exists(report_path):
+                                raise FileNotFoundError(f"Report file not found: {report_path}")
+
+        report_df = pd.read_excel(report_path)
         
         # Count lesions by type
         lesion_counts = report_df['Lesion Type'].value_counts()
@@ -192,21 +214,29 @@ async def get_total_lesions(patient_name: str):
             status_code=500
         )
 
-@app.get("/api/slice/{patient_name}/{slice_num}")
-async def get_slice(patient_name: str, slice_num: int, show_false_positives: bool = False):
+@app.get("/api/slice/{run_id}/{patient_name}/{slice_num}")
+async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_positives: bool = False):
     try:
-        # Load NIFTI files
-        lesion_file_path = f"files/NIFTI/4031-{patient_name}/lesion_map.nii.gz"
-        brain_file_path = f"files/NIFTI/4031-{patient_name}/flair.nii.gz" 
+        # Construct the correct path            
+        base_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name)
+
+        if not os.path.exists(base_path):
+            raise FileNotFoundError(f"Patient directory not found: {base_path}")
         
-        # Load report data
-        report_df = pd.read_excel(f"files/report_4031-{patient_name}.xlsx")
-        
+        # Load the lesion and brain images
+        lesion_file_path = os.path.join(base_path, "lesion_map.nii.gz")
+        brain_file_path = os.path.join(base_path, "flair_registered.nii.gz")
         lesion_img = nib.load(lesion_file_path)
         brain_img = nib.load(brain_file_path)
-        
         lesion_data = lesion_img.get_fdata()
         brain_data = brain_img.get_fdata()
+        
+        # Load the report file
+        report_path = os.path.join(base_path, f"report_{patient_name}.xlsx")
+        report_df = pd.read_excel(report_path)
+        
+        if not all(os.path.exists(f) for f in [lesion_file_path, brain_file_path, report_path]):
+            raise FileNotFoundError("One or more required files not found")
         
         # Get the requested slices
         lesion_slice = lesion_data[:, :, slice_num]
@@ -236,6 +266,7 @@ async def get_slice(patient_name: str, slice_num: int, show_false_positives: boo
         # Normalize and set brain background
         brain_normalized = ((brain_slice - brain_slice.min()) / 
                           (brain_slice.max() - brain_slice.min() + 1e-8) * 255).astype(np.uint8)
+        
         colored_slice[:, :, 0] = brain_normalized
         colored_slice[:, :, 1] = brain_normalized
         colored_slice[:, :, 2] = brain_normalized
@@ -352,12 +383,7 @@ async def upload_dicoms(files: List[UploadFile] = File(...)):
                 if os.path.exists(flair_dir) and os.path.exists(t1_dir):
                     # Create a unique ID for this patient-session combination
                     session_id = f"{patient_dir}_{session_dir}"
-                    
-                    # Start processing pipeline for this session
-                    process_task = asyncio.create_task(
-                        process_scans(run_id, session_id, [flair_dir, t1_dir])
-                    )
-        
+
         return JSONResponse(
             content={
                 "message": f"Files uploaded successfully. Processing started for {len(patient_dirs)} patients.",
@@ -487,7 +513,8 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 if not flair_dir or not t1_dir:
                     raise ValueError(f"Could not find FLAIR and T1 directories in {patient_path}")
                 
-                # Initialize MSXplainReport with unique output directory for each patient
+                # Initialize MSXplainReport with correct output directory structure
+                # Change this line to avoid path duplication
                 patient_output_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_dir)
                 os.makedirs(patient_output_dir, exist_ok=True)
                 
@@ -496,7 +523,7 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 msxplain = MSXplainReport(
                     flair_dir=flair_dir,
                     t1_dir=t1_dir,
-                    output_dir=patient_output_dir
+                    output_dir=patient_output_dir  # This will be the final path without duplication
                 )
                 
                 # Preprocessing step
@@ -508,8 +535,8 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 preprocessed_files = msxplain.preprocess_images(nifti_files)
                 
                 status['steps']['preprocessing'] = 'completed'
-                await notify_progress(run_id)
                 print(f"Completed preprocessing for {patient_dir}")
+                await notify_progress(run_id)
                 
                 # MSXplain step
                 print(f"Starting MSXplain for {patient_dir}")
@@ -533,21 +560,21 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 # Generate report
                 report_df = msxplain.generate_report(prediction_file)
                 
-                # Save report to Excel file
-                report_path = os.path.join(patient_output_dir, f"report_4031-{msxplain.patient_id}.xlsx")
+                # Update report path to use correct structure
+                report_path = os.path.join(patient_output_dir, f"report_{patient_dir}.xlsx")
                 report_df.to_excel(report_path, index=False)
                 
                 if not os.path.exists(report_path):
                     raise ValueError(f"Failed to save report for {patient_dir}")
                 
                 status['steps']['report'] = 'completed'
-                await notify_progress(run_id)
                 print(f"Completed report generation for {patient_dir}")
+                await notify_progress(run_id)
                 
                 # Mark patient as completed
                 status['status'] = 'completed'
-                await notify_progress(run_id)
                 print(f"Completed all processing for patient {patient_dir} [{i+1}/{len(patient_dirs)}]")
+                await notify_progress(run_id)
                 
             except Exception as e:
                 print(f"Error processing patient {patient_dir}: {str(e)}")
@@ -638,6 +665,55 @@ async def get_patients():
         
     except Exception as e:
         print(f"Error getting patients: {str(e)}")
+        traceback.print_exc()
+        return JSONResponse(
+            content={"error": str(e)},
+            status_code=500
+        )
+
+@app.get("/api/processed-runs")
+async def get_processed_runs():
+    try:
+        if not os.path.exists(PROCESSED_FOLDER):
+            return []
+            
+        runs = []
+        for run_id in os.listdir(PROCESSED_FOLDER):
+            run_dir = os.path.join(PROCESSED_FOLDER, run_id)
+            if os.path.isdir(run_dir):
+                # Get patients in this run
+                patients = []
+                for patient_dir in os.listdir(run_dir):
+                    patient_path = os.path.join(run_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        # Check if processing is complete
+                        report_path = os.path.join(patient_path, f"report_{patient_dir}.xlsx")
+                        status = "Complete" if os.path.exists(report_path) else "Processing"
+                        
+                        patients.append({
+                            "id": patient_dir,
+                            "status": status
+                        })
+                
+                # Get run date from run_id
+                try:
+                    run_date = datetime.strptime(
+                        run_id.split('_')[1], 
+                        '%Y%m%d'
+                    ).strftime('%Y-%m-%d')
+                except:
+                    run_date = "Unknown"
+                
+                runs.append({
+                    "id": run_id,
+                    "date": run_date,
+                    "patients": patients
+                })
+        
+        return sorted(runs, key=lambda x: x['date'], reverse=True)
+        
+    except Exception as e:
+        print(f"Error getting processed runs: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": str(e)},
