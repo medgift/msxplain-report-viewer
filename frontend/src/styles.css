@@ -43,18 +43,29 @@ body {
   font-size: 2.5rem;
 }
 
-/* 3D visualization button */
-.view-3d-button {
+/* Unified button styles */
+.view-3d-button, .back-button, .action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  min-height: 40px;
+  min-width: 160px;  /* Add minimum width for consistency */
+  font-size: 1rem;
   background-color: var(--primary-color);
   color: white;
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--border-radius);
   text-decoration: none;
-  transition: background-color 0.3s ease;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap; /* This prevents text wrapping */
 }
 
-.view-3d-button:hover {
+.view-3d-button:hover, .back-button:hover, .action-button:hover {
   background-color: var(--secondary-color);
+  transform: translateY(-2px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 /* Report sections */
@@ -205,11 +216,6 @@ th, td {
 
 .viewer-container {
   padding: 20px;
-  max-width: 800px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 
 .image-container {
@@ -256,37 +262,16 @@ th, td {
   height: 20px;
 }
 
-/* Navigation bar */
-.navigation-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  padding: 1rem;
-  z-index: 100;
-}
-
 /* Back button */
 .back-button {
-  background-color: var(--primary-color);
-  color: white;
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--border-radius);
-  text-decoration: none;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: absolute;
+  left: 20px;
+  top: 20px;
 }
 
-.back-button:hover {
-  background-color: var(--secondary-color);
-  transform: translateX(-5px);
-}
-
+/* Remove the ::before pseudo-element that adds an extra arrow */
 .back-button::before {
-  content: "←";
-  font-size: 1.2em;
+  content: none;
 }
 
 /* Viewer header */
@@ -498,6 +483,13 @@ th, td {
   margin: 2rem auto;
   padding: 2rem;
   text-align: center;
+  padding-top: 2rem;
+}
+
+.input-container h2 {
+  color: var(--text-color);
+  margin-bottom: 2rem;
+  text-align: center;
 }
 
 .button-container {
@@ -588,4 +580,32 @@ th, td {
   border-radius: var(--border-radius);
   margin: 2rem auto;
   max-width: 600px;
+}
+
+.navigation-header {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  position: relative;
+  width: 100%;
+}
+
+.navigation-header h2,
+.navigation-header h1 {
+  margin: 0 auto;
+  text-align: center;
+}
+
+.app-header {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 1rem;
+  text-align: left;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: bold;
 }

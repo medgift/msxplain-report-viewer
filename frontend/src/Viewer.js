@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import axios from "axios";
 import './styles.css';
 
 const Viewer = () => {
@@ -154,24 +153,22 @@ const Viewer = () => {
 
   return (
     <div className="viewer-container">
-      <div className="navigation-bar">
-        <Link to={`/report/${patient_name}`} className="back-button">
-          Back to Report
+      <div className="navigation-header">
+        <Link to={`/report/${run_id}/${patient_name}`} className="back-button">
+          ← Back to Report
         </Link>
+        <h2>Brain Slice Viewer</h2>
       </div>
-      
-      <header className="viewer-header">
-        <h1>Brain Slice Viewer</h1>
-        <div className="viewer-controls">
-          <button 
-            className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
-            onClick={() => setShowFalsePositives(!showFalsePositives)}
-          >
-            {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
-          </button>
-          {renderLesionInfo()}
-        </div>
-      </header>
+
+      <div className="viewer-controls">
+        <button 
+          className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
+          onClick={() => setShowFalsePositives(!showFalsePositives)}
+        >
+          {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
+        </button>
+        {renderLesionInfo()}
+      </div>
       
       <div 
         className="image-container" 
