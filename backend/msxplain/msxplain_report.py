@@ -5,6 +5,9 @@ from pathlib import Path
 import time
 import pydicom
 import glob
+from .predict import predict_msxplain
+from .samseg_processing import run_samseg_processing
+from .lesion_information import generate_lesion_report
 
 # Set FSLDIR and  FREESURFER and ANTs PATH
 fsl_dir = "/home/lluis/msxplain/fsl"
@@ -136,7 +139,8 @@ class MSXplainReport:
 
     def preprocess_images(self, nifti_files):
         """Run preprocessing steps on NIFTI files"""
-        print("Preprocessing images...")
+
+        print("Running FSL orientation and N4 bias field correction...")
         
         # FSL orientation steps
         for img_path in [nifti_files['flair'], nifti_files['t1']]:
@@ -155,6 +159,8 @@ class MSXplainReport:
             nifti_files[f"{img_type}_n4"] = output_path
         
         # Elastix registration
+        print("Running Elastix registration...")
+        
         reg_dir = os.path.join(self.output_dir, "registration")
         os.makedirs(reg_dir, exist_ok=True)
         
@@ -176,10 +182,6 @@ class MSXplainReport:
 
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
-        print("Running MSXplain pipeline...")
-        
-        from .predict import predict_msxplain
-        from .samseg_processing import run_samseg_processing
         
         # Create SAMSEG directory
         samseg_dir = os.path.join(self.output_dir, "SAMSEG")
@@ -197,6 +199,8 @@ class MSXplainReport:
         )
         
         # Run SAMSEG processing
+        print("Running SAMSEG processing...")
+        
         run_samseg_processing(
             patient_dir=self.output_dir,
             t1_path=os.path.join(self.output_dir, "t1_n4.nii.gz"),
@@ -207,9 +211,6 @@ class MSXplainReport:
 
     def generate_report(self, prediction_file):
         """Generate the final report"""
-        print("Generating report...")
-        
-        from .lesion_information import generate_lesion_report
         
         report_path = generate_lesion_report(
             patient_id=self.patient_id,
@@ -218,7 +219,6 @@ class MSXplainReport:
             samseg_path=os.path.join(self.output_dir, "SAMSEG")
         )
         
-        print(f"Report generated at: {report_path}")
         return report_path
 
     def run(self):

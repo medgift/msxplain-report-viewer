@@ -1,0 +1,54 @@
+.navigation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  position: relative;
+}
+
+.processing-container {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.patient-progress {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.step-status {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  border-radius: 4px;
+  background: #f5f5f5;
+}
+
+.step-status.completed {
+  background: #e6f7e6;
+  color: #52c41a;
+}
+
+.step-status.pending {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.step-status.processing {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.view-report-button {
+  margin-top: 20px;
+}

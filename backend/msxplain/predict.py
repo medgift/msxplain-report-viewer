@@ -229,10 +229,10 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         
         # Override CUDA availability if requested
         if force_cuda:
-            print("======= IN CUDA ======")
+            print("Running MS Lesion Prediction IN CUDA")
             torch.cuda.is_available = lambda : True
         else:
-            print("======= IN CPU ======")
+            print("Running MS Lesion Prediction IN CPU")
             torch.cuda.is_available = lambda : False
         
         # Setup logging
