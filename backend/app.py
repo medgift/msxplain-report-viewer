@@ -1,7 +1,7 @@
 import traceback
 import os
 from datetime import datetime
-from fastapi import FastAPI, Response, UploadFile, File
+from fastapi import FastAPI, Response, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -415,7 +415,7 @@ def validate_dicoms(directory):
         return False
 
 @app.post("/api/process-scans/{run_id}")
-async def start_processing(run_id: str):
+def start_processing(run_id: str, background_tasks: BackgroundTasks):
     try:
         base_dir = os.path.join(UPLOAD_FOLDER, run_id)
         
@@ -432,12 +432,9 @@ async def start_processing(run_id: str):
             }, status_code=400)
         
         # Get patient directories inside DICOMS folder
-        patient_dirs = []
-        for item in os.listdir(dicoms_dir):
-            if item.startswith("4031-"):  # Pattern for patient directories
-                item_path = os.path.join(dicoms_dir, item)
-                if os.path.isdir(item_path):
-                    patient_dirs.append(item)
+        patient_dirs = [item for item in os.listdir(dicoms_dir) 
+                       if item.startswith("4031-") and 
+                       os.path.isdir(os.path.join(dicoms_dir, item))]
         
         if not patient_dirs:
             return JSONResponse({
@@ -446,7 +443,7 @@ async def start_processing(run_id: str):
         
         print(f"Found {len(patient_dirs)} patient directories: {patient_dirs}")
         
-        # Initialize processing status for all patients
+        # Initialize processing status
         processing_status[run_id] = {
             'patients': {
                 patient_dir: {
@@ -461,8 +458,8 @@ async def start_processing(run_id: str):
             }
         }
         
-        # Start processing in background
-        asyncio.create_task(process_all_patients(run_id, dicoms_dir, patient_dirs))
+        # Add to background tasks instead of creating asyncio task
+        background_tasks.add_task(process_all_patients, run_id, dicoms_dir, patient_dirs)
         
         return JSONResponse({
             'message': f"Processing started for {len(patient_dirs)} patients",
@@ -476,11 +473,27 @@ async def start_processing(run_id: str):
             'error': str(e)
         }, status_code=500)
 
-async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
+def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
     """Process all patients sequentially with progress updates"""
     try:
-        print(f"\nStarting processing for run {run_id}")
-        print(f"Will process these patients in order: {patient_dirs}")
+        print(f"\nStarting processing for run {run_id}...")
+        global processing_status  # Add this line to access global variable
+        
+        # Initialize processing status if not exists
+        if run_id not in processing_status:
+            processing_status[run_id] = {
+                'patients': {
+                    patient_dir: {
+                        'status': 'pending',
+                        'steps': {
+                            'preprocessing': 'pending',
+                            'msxplain': 'pending',
+                            'report': 'pending'
+                        }
+                    }
+                    for patient_dir in patient_dirs
+                }
+            }
         
         for i, patient_dir in enumerate(patient_dirs):
             try:
@@ -489,7 +502,7 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 status['status'] = 'processing'
                 
                 # Notify progress update
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 print(f"\n[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
                 patient_path = os.path.join(base_dir, patient_dir)
@@ -527,21 +540,21 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 )
                 
                 # Preprocessing step
-                print(f"Starting preprocessing for {patient_dir}")
+                print(f"Starting preprocessing for {patient_dir}...")
                 status['steps']['preprocessing'] = 'processing'
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 nifti_files = msxplain.convert_dicoms_to_nifti()
                 preprocessed_files = msxplain.preprocess_images(nifti_files)
                 
                 status['steps']['preprocessing'] = 'completed'
                 print(f"Completed preprocessing for {patient_dir}")
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 # MSXplain step
-                print(f"Starting MSXplain for {patient_dir}")
+                print(f"Starting MSXplain Report pipeline for {patient_dir}...")
                 status['steps']['msxplain'] = 'processing'
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 prediction_file = msxplain.run_msxplain(preprocessed_files)
                 
@@ -549,13 +562,13 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                     raise ValueError(f"MSXplain failed to generate prediction for {patient_dir}")
                 
                 status['steps']['msxplain'] = 'completed'
-                await notify_progress(run_id)
-                print(f"Completed MSXplain for {patient_dir}")
+                # notify_progress(run_id)
+                print(f"Completed MSXplain Report pipeline for {patient_dir}")
                 
                 # Report generation step
-                print(f"Starting report generation for {patient_dir}")
+                print(f"Starting report generation for {patient_dir}...")
                 status['steps']['report'] = 'processing'
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 # Generate report
                 report_df = msxplain.generate_report(prediction_file)
@@ -569,12 +582,12 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 
                 status['steps']['report'] = 'completed'
                 print(f"Completed report generation for {patient_dir}")
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
                 # Mark patient as completed
                 status['status'] = 'completed'
                 print(f"Completed all processing for patient {patient_dir} [{i+1}/{len(patient_dirs)}]")
-                await notify_progress(run_id)
+                # notify_progress(run_id)
                 
             except Exception as e:
                 print(f"Error processing patient {patient_dir}: {str(e)}")
@@ -583,7 +596,7 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 for step in status['steps']:
                     if status['steps'][step] == 'processing':
                         status['steps'][step] = 'error'
-                await notify_progress(run_id)
+                # notify_progress(run_id)
         
         print(f"\nAll processing completed for run {run_id}")
         print("Final status:")
@@ -594,82 +607,58 @@ async def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
         print(f"Error in process_all_patients: {str(e)}")
         traceback.print_exc()
 
-async def notify_progress(run_id: str):
-    """Notify progress to connected clients"""
-    try:
-        # Add a small delay to allow status updates to propagate
-        await asyncio.sleep(0.1)
-    except Exception as e:
-        print(f"Error in notify_progress: {str(e)}")
+# def notify_progress(run_id: str):
+#     """Notify progress to connected clients"""
+#     try:
+#         # Add a small delay to allow status updates to propagate
+#         asyncio.sleep(0.1)
+#     except Exception as e:
+#         # print(f"Error in notify_progress: {str(e)}")
 
 @app.get("/api/process-status/{run_id}")
-async def get_processing_status(run_id: str):
+async def get_process_status(run_id: str):
     try:
-        if run_id not in processing_status:
-            return JSONResponse({
-                'error': f"No status found for run {run_id}"
-            }, status_code=404)
-            
-        status_info = processing_status[run_id]
-        print(f"Status for run {run_id}:", status_info)
+        print(f"Getting status for run: {run_id}")
         
-        return JSONResponse(
-            content=status_info,
-            headers={
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
-            }
-        )
-        
-    except Exception as e:
-        print(f"Error checking status: {str(e)}")
-        traceback.print_exc()
-        return JSONResponse({
-            'error': str(e)
-        }, status_code=500)
+        # Get the run directory
+        run_dir = os.path.join(PROCESSED_FOLDER, run_id)
+        if not os.path.exists(run_dir):
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-@app.get("/api/patients")
-async def get_patients():
-    try:
-        # Get list of processed patient directories
-        processed_dir = PROCESSED_FOLDER
-        if not os.path.exists(processed_dir):
-            return []
-            
-        patients = []
-        for patient_id in os.listdir(processed_dir):
-            patient_dir = os.path.join(processed_dir, patient_id)
-            if os.path.isdir(patient_dir):
-                # Get patient status
-                status = "Complete"
-                if not os.path.exists(os.path.join(patient_dir, "report_complete")):
-                    status = "Processing"
-                
-                # Get scan date from directory name or metadata
-                try:
-                    scan_date = datetime.strptime(
-                        patient_id.split('_')[1], 
-                        '%Y%m%d'
-                    ).strftime('%Y-%m-%d')
-                except:
-                    scan_date = "Unknown"
-                
-                patients.append({
-                    "id": patient_id,
-                    "scan_date": scan_date,
-                    "status": status
-                })
+        patients = {}
         
-        return sorted(patients, key=lambda x: x['scan_date'], reverse=True)
+        # Check each patient directory
+        for patient_dir in os.listdir(run_dir):
+            if os.path.isdir(os.path.join(run_dir, patient_dir)):
+                patient_path = os.path.join(run_dir, patient_dir)
+                
+                # Check status for each step
+                preprocessing_done = os.path.exists(os.path.join(patient_path, "flair_registered.nii.gz"))
+                msxplain_done = os.path.exists(os.path.join(patient_path, "lesion_map.nii.gz"))
+                report_done = os.path.exists(os.path.join(patient_path, f"report_{patient_dir}.xlsx"))
+                
+                patients[patient_dir] = {
+                    "steps": {
+                        "preprocessing": "completed" if preprocessing_done else "processing",
+                        "msxplain": "completed" if msxplain_done else 
+                                   "processing" if preprocessing_done else "pending",
+                        "report": "completed" if report_done else 
+                                 "processing" if msxplain_done else "pending"
+                    }
+                }
+
+        response_data = {
+            "run_id": run_id,
+            "patients": patients
+        }
         
+        print(f"Status response: {response_data}")
+        return response_data
+
     except Exception as e:
-        print(f"Error getting patients: {str(e)}")
+        print(f"Error getting process status: {str(e)}")
         traceback.print_exc()
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/processed-runs")
 async def get_processed_runs():
