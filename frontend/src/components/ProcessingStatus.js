@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useProcessing } from '../context/ProcessingContext';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import './ProcessingStatus.css';
 
 const ProcessingStatus = () => {
   const { activeRun, setActiveRun, processingStatus, setProcessingStatus } = useProcessing();
-  const navigate = useNavigate();
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -66,48 +65,115 @@ const ProcessingStatus = () => {
   // Add console.log to debug render values
   console.log('Current state:', { activeRun, processingStatus });
 
+  const getCompletedCount = (patients) => {
+    if (!patients) return 0;
+    return Object.values(patients).filter(patient => 
+      patient?.steps && Object.values(patient.steps).every(step => step === 'completed')
+    ).length;
+  };
+
+  const getTotalPatients = (processingStatus) => {
+    if (!processingStatus) return 0;
+    
+    // First try to get from total_patients field
+    if (typeof processingStatus.total_patients === 'number') {
+      console.log('Using total_patients:', processingStatus.total_patients);
+      return processingStatus.total_patients;
+    }
+    
+    // Then try to get from patients object
+    if (processingStatus.patients) {
+      const count = Object.keys(processingStatus.patients).length;
+      console.log('Using patients count:', count);
+      return count;
+    }
+    
+    return 0;
+  };
+
+  const getCurrentlyProcessingPatient = (patients) => {
+    if (!patients) return null;
+    return Object.entries(patients).find(([_, patient]) => 
+      patient?.steps && Object.values(patient.steps).some(step => step === 'processing')
+    );
+  };
+
   return (
-    <div className="processing-container">
-      <div className="navigation-header">
-        <Link to="/upload" className="back-button">← Back to Upload</Link>
-        <h2>Processing Status</h2>
-      </div>
-
-      {error && (
-        <div className="error-message">
-          Error: {error}
+    <div className="page-container">
+      <nav className="navigation-bar">
+        <div className="nav-left">
+          <Link to="/upload" className="back-button">← Back to Upload</Link>
         </div>
-      )}
-
-      {!activeRun && (
-        <div className="no-processing">
-          <p>No active processing run found.</p>
-          <Link to="/upload" className="action-button">Start New Processing</Link>
+        <div className="nav-center">
+          <h2>Processing Status</h2>
         </div>
-      )}
+        <div className="nav-right" />
+      </nav>
 
-      {activeRun && processingStatus?.patients && (
-        <div className="processing-status">
-          {Object.entries(processingStatus.patients).map(([patientId, status]) => (
-            <div key={patientId} className="patient-card">
-              <h3>Patient: {patientId}</h3>
-              <div className="steps-container">
-                {Object.entries(status.steps || {}).map(([step, stepStatus]) => (
-                  <div key={step} className={`step-status ${stepStatus}`}>
-                    <span className="step-label">{step}</span>
-                    <span className="step-value">
-                      {stepStatus === 'processing' && '⚙️ '}
-                      {stepStatus === 'completed' && '✅ '}
-                      {stepStatus === 'pending' && '⏳ '}
-                      {stepStatus}
-                    </span>
+      <div className="processing-container">
+        {error && (
+          <div className="error-message">
+            Error: {error}
+          </div>
+        )}
+
+        {!activeRun && (
+          <div className="no-processing">
+            <p>No active processing run found.</p>
+            <Link to="/upload" className="action-button">Start New Processing</Link>
+          </div>
+        )}
+
+        {activeRun && processingStatus?.patients && (
+          <div className="processing-status">
+            <div className="run-container">
+              <div className="run-header">
+                <h2 className="run-id">Run: {activeRun}</h2>
+                <div className="run-progress">
+                  <span className="progress-count">
+                    {getCompletedCount(processingStatus?.patients || {})}/
+                    {getTotalPatients(processingStatus)} Completed
+                  </span>
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill"
+                      style={{ 
+                        width: `${(getCompletedCount(processingStatus?.patients || {}) / 
+                                 Math.max(getTotalPatients(processingStatus), 1)) * 100}%` 
+                      }}
+                    />
                   </div>
-                ))}
+                </div>
               </div>
+
+              {(() => {
+                const processingPatient = getCurrentlyProcessingPatient(processingStatus.patients);
+                if (!processingPatient) return null;
+
+                const [patientId, status] = processingPatient;
+                return (
+                  <div key={patientId} className="patient-card processing">
+                    <h3>Processing Patient: {patientId}</h3>
+                    <div className="steps-container">
+                      {Object.entries(status.steps).map(([step, stepStatus]) => (
+                        <div key={step} className={`step-status ${stepStatus}`}>
+                          <span className="step-label">{step}</span>
+                          <span className="step-value">
+                            {stepStatus === 'processing' && '⚙️ '}
+                            {stepStatus === 'completed' && '✅ '}
+                            {stepStatus === 'pending' && '⏳ '}
+                            {stepStatus}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

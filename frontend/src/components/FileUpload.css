@@ -1,11 +1,106 @@
+.page-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.navigation-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 1.5rem 3rem; /* Increased padding */
+  background-color: white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  min-height: 50px; /* Added minimum height */
+}
+
+.nav-left {
+  justify-self: start;
+  margin-right: 2rem; /* Added margin for better spacing */
+}
+
+.nav-center {
+  text-align: center;
+  padding: 0 2rem; /* Added padding around title */
+}
+
+.nav-right {
+  justify-self: end;
+  margin-left: 2rem; /* Added margin for better spacing */
+}
+
+.navigation-bar h2 {
+  margin: 0;
+  color: var(--primary-color);
+  white-space: nowrap;
+}
+
+.back-button {
+  text-decoration: none;
+  color: white;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem; /* Increased padding */
+  border-radius: 4px;
+  transition: all 0.2s;
+  white-space: nowrap;
+  background-color: var(--primary-color); /* Added to match theme */
+}
+
+.back-button:hover {
+  background-color: var(--secondary-color);
+  color: white; /* Keep text white on hover */
+}
+
+.view-status-button {
+  padding: 8px 16px;
+  background-color: var(--primary-color);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.view-status-button:hover {
+  background-color: var (--secondary-color);
+}
+
 .upload-container {
-  padding: 20px;
+  flex: 1;
+  padding: 2rem;
   max-width: 800px;
   margin: 0 auto;
+  width: 100%;
+}
+
+/* Remove the .navigation-header class as it's no longer needed */
+.navigation-header {
+  display: none;
+}
+
+.view-3d-button {
+  padding: 8px 16px;
+  background-color: var(--primary-color);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.view-3d-button:hover {
+  background-color: var(--secondary-color);
 }
 
 .upload-header {
-  margin-bottom: 30px;
+  text-align: center;
+  margin-bottom: 2rem;
 }
 
 .upload-header h2 {
@@ -15,48 +110,60 @@
 
 .upload-instructions {
   color: #666;
-  margin-bottom: 20px;
+  max-width: 600px;
+  margin: 1rem auto;
+  line-height: 1.5;
+  background-color: #f5f5f5;
+  padding: 1rem;
+  border-radius: 4px;
 }
 
 .upload-controls {
   display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 30px;
-  padding: 20px;
-  border: 2px dashed #d9d9d9;
+  background-color: white;
+  padding: 2rem;
   border-radius: 8px;
-  background-color: #fafafa;
-}
-
-.upload-controls:hover {
-  border-color: #1890ff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .file-input {
-  flex: 1;
+  width: 100%;
+  max-width: 400px;
+  padding: 1rem;
+  border: 2px dashed #ccc;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
-.upload-button {
-  padding: 8px 16px;
+.file-input:hover {
+  border-color: var(--primary-color);
+}
+
+.upload-button,
+.process-button {
+  padding: 10px 20px;
+  min-width: 200px;
+  background-color: var(--primary-color);
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  font-size: 1rem;
+  font-weight: 500;
+  transition: background-color 0.2s;
 }
 
-.upload-button:enabled {
-  background-color: #1890ff;
+.upload-button:hover:not(:disabled),
+.process-button:hover:not(:disabled) {
+  background-color: var(--secondary-color);
 }
 
 .upload-button:disabled {
   background-color: #ccc;
   cursor: not-allowed;
-}
-
-.upload-button:enabled:hover {
-  background-color: #40a9ff;
 }
 
 .patient-container {
@@ -119,24 +226,9 @@
   border-radius: 4px;
 }
 
-.process-button {
-  padding: 8px 16px;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-  background-color: #52c41a;
-  margin-left: 10px;
-}
-
 .process-button:disabled {
   background-color: #ccc;
   cursor: not-allowed;
-}
-
-.process-button:enabled:hover {
-  background-color: #73d13d;
 }
 
 .completion-message {
