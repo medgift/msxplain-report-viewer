@@ -68,47 +68,54 @@ const [runId, setRunId] = useState(null);
   };
 
   return (
-    <div className="upload-container">
-      <div className="navigation-header">
-        <Link to="/" className="back-button">← Back to Home</Link>
-        <h2>Upload Patient Data</h2>
-        {/* Add Processing Status button */}
-        <Link to="/processing" className="view-3d-button">
-          View Processing Status
-        </Link>
-      </div>
-      <div className="upload-header">
-        <h2>Upload Patient Data</h2>
-        <p className="upload-instructions">
-          Select a folder containing patient data. Each patient folder should contain session folders with 'flair' and 't1' subfolders.
-        </p>
-      </div>
-      
-      <div className="upload-controls">
-        <input
-          type="file"
-          webkitdirectory="true"
-          directory="true"
-          onChange={handleFolderSelect}
-          className="file-input"
-disabled={uploading}
-        />
-        <button
-          onClick={handleUpload}
-          disabled={uploading || !selectedFolder}
-          className="upload-button"
-        >
-          {uploading ? 'Uploading...' : 'Upload Folder'}
-        </button>
+    <div className="page-container">
+      <nav className="navigation-bar">
+        <div className="nav-left">
+          <Link to="/" className="back-button">← Back to Home</Link>
+        </div>
+        <div className="nav-center">
+          <h2>Upload Patient Data</h2>
+        </div>
+        <div className="nav-right">
+          <Link to="/processing" className="view-status-button">
+            View Processing Status
+          </Link>
+        </div>
+      </nav>
 
-        {uploadComplete && (
+      <div className="upload-container">
+        <div className="upload-header">
+          <p className="upload-instructions">
+            Select a folder containing patient data. Each patient folder should contain session folders with 'flair' and 't1' subfolders.
+          </p>
+        </div>
+        
+        <div className="upload-controls">
+          <input
+            type="file"
+            webkitdirectory="true"
+            directory="true"
+            onChange={handleFolderSelect}
+            className="file-input"
+            disabled={uploading}
+          />
           <button
-            onClick={handleStartProcessing}
-            className="process-button"
+            onClick={handleUpload}
+            disabled={uploading || !selectedFolder}
+            className="upload-button"
           >
-            Process Scans
+            {uploading ? 'Uploading...' : 'Upload Folder'}
           </button>
-        )}
+
+          {uploadComplete && (
+            <button
+              onClick={handleStartProcessing}
+              className="process-button"
+            >
+              Process Scans
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

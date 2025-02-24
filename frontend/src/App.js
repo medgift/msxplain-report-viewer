@@ -1,10 +1,9 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import HomePage from "./HomePage";    // Page for entering patient name
-import ReportPage from "./ReportPage";  // Page with report and button
-import Viewer from "./Viewer";           // Page with 3D image navigation
+import HomePage from "./components/HomePage";
+import ReportPage from "./components/ReportPage";
+import Viewer from "./components/Viewer";
 import FileUpload from "./components/FileUpload";
-import PatientList from "./PatientList";
 import ProcessedRuns from './components/ProcessedRuns';
 import { ProcessingProvider } from './context/ProcessingContext';
 import ProcessingStatus from './components/ProcessingStatus';
@@ -17,7 +16,6 @@ const App = () => {
           {/* Initial page for entering patient name */}
           <Route path="/" element={<HomePage />} />
           <Route path="/upload" element={<FileUpload />} />
-          <Route path="/patients" element={<PatientList />} />
           <Route path="/processing" element={<ProcessingStatus />} />
           {/* Page showing the report */}
           <Route path="/report/:patient_name" element={<ReportPage />} />

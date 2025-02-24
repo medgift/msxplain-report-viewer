@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import './styles.css';
+import './Viewer.css';
 
 const Viewer = () => {
   const { run_id, patient_name } = useParams();
@@ -21,7 +21,8 @@ const Viewer = () => {
         const response = await fetch(
           `http://localhost:5000/api/total_lesions/${run_id}/${patient_name}`
         );
-        setLesionCounts(response.data);
+        const data = await response.json(); // Add this line to parse the JSON
+        setLesionCounts(data);
       } catch (error) {
         console.error("Error fetching lesion info:", error);
       }
@@ -152,58 +153,70 @@ const Viewer = () => {
   }, [isMouseOverImage]);
 
   return (
-    <div className="viewer-container">
-      <div className="navigation-header">
-        <Link to={`/report/${run_id}/${patient_name}`} className="back-button">
-          ← Back to Report
-        </Link>
-        <h2>Brain Slice Viewer</h2>
-      </div>
+    <div className="page-container">
+      <nav className="navigation-bar">
+        <div className="nav-left">
+          <Link 
+            to={`/report/${run_id}/${patient_name}`} 
+            className="back-button"
+          >
+            ← Back to Report
+          </Link>
+        </div>
+        <div className="nav-center">
+          <h2>Viewer (Patient: {patient_name})</h2>
+        </div>
+        <div className="nav-right" />
+      </nav>
 
-      <div className="viewer-controls">
-        <button 
-          className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
-          onClick={() => setShowFalsePositives(!showFalsePositives)}
-        >
-          {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
-        </button>
-        {renderLesionInfo()}
-      </div>
-      
-      <div 
-        className="image-container" 
-        onWheel={handleWheel}
-        onMouseEnter={() => setIsMouseOverImage(true)}
-        onMouseLeave={() => setIsMouseOverImage(false)}
-      >
-        {error && <p className="error-message">{error}</p>}
-        {loading ? (
-          <div className="loading-container">
-            <p>Loading slice {sliceNum}...</p>
+      <div className="viewer-content">
+        <div className="content-container">
+          <div className="viewer-controls">
+            <button 
+              className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
+              onClick={() => setShowFalsePositives(!showFalsePositives)}
+            >
+              {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
+            </button>
+            {renderLesionInfo()}
           </div>
-        ) : (
-          imageData && (
-            <div className="image-wrapper">
-              <img
-                src={imageData}
-                alt={`Brain slice ${displayedSlice}`}
-                className="brain-slice-image"
-              />
-            </div>
-          )
-        )}
-      </div>
-      
-      <div className="controls">
-        <input
-          type="range"
-          min="0"
-          max={maxSlice}
-          value={sliceNum}
-          onChange={(e) => setSliceNum(parseInt(e.target.value))}
-          className="slice-slider"
-        />
-        <p>Slice: {sliceNum} / {maxSlice}</p>
+          
+          <div 
+            className="image-container" 
+            onWheel={handleWheel}
+            onMouseEnter={() => setIsMouseOverImage(true)}
+            onMouseLeave={() => setIsMouseOverImage(false)}
+          >
+            {error && <p className="error-message">{error}</p>}
+            {loading ? (
+              <div className="loading-container">
+                <p>Loading slice {sliceNum}...</p>
+              </div>
+            ) : (
+              imageData && (
+                <div className="image-wrapper">
+                  <img
+                    src={imageData}
+                    alt={`Brain slice ${displayedSlice}`}
+                    className="brain-slice-image"
+                  />
+                </div>
+              )
+            )}
+          </div>
+          
+          <div className="controls">
+            <input
+              type="range"
+              min="0"
+              max={maxSlice}
+              value={sliceNum}
+              onChange={(e) => setSliceNum(parseInt(e.target.value))}
+              className="slice-slider"
+            />
+            <p>Slice: {sliceNum} / {maxSlice}</p>
+          </div>
+        </div>
       </div>
     </div>
   );

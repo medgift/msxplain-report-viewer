@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import pandas as pd
-import math
 import nibabel as nib
 import numpy as np
 from io import BytesIO
@@ -14,7 +13,6 @@ from PIL import Image
 import pydicom
 from typing import List, Dict
 import shutil
-import asyncio
 from msxplain.msxplain_report import MSXplainReport
 from fastapi.background import BackgroundTasks
 from concurrent.futures import ThreadPoolExecutor
@@ -43,17 +41,6 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
 # Create a thread pool executor
 thread_pool = ThreadPoolExecutor(max_workers=4)
-
-def sanitize_data(data):
-    # Recursively check the data and replace invalid values
-    if isinstance(data, float):
-        if math.isinf(data) or math.isnan(data):
-            return None  # Replace invalid values with None
-    elif isinstance(data, dict):
-        return {key: sanitize_data(value) for key, value in data.items()}
-    elif isinstance(data, list):
-        return [sanitize_data(value) for value in data]
-    return data
 
 def convert_numpy_types(data):
     # Convert numpy data types to native Python types
@@ -92,12 +79,8 @@ async def get_report(run_id: str, patient_name: str):
             
         df = pd.read_excel(file_path)
         
-        # Clean data
-        sanitized_data = sanitize_data(df.to_dict(orient="records"))
-        
         # Initialize variables
         lesion_counts = df['Lesion Type'].value_counts().to_dict()
-        lesion_voxels_sum = df.loc[df['Lesion Type'] != 'False Positive', 'Lesion Voxels'].sum()
         lesion_volume_sum = df.loc[df['Lesion Type'] != 'False Positive', 'Lesion Volume'].sum()
         
         # Convert data to native Python types
@@ -403,19 +386,8 @@ async def upload_dicoms(files: List[UploadFile] = File(...)):
             status_code=500
         )
 
-def validate_dicoms(directory):
-    """Validate that all files in directory are valid DICOM files"""
-    try:
-        for filename in os.listdir(directory):
-            file_path = os.path.join(directory, filename)
-            pydicom.dcmread(file_path)
-        return True
-    except Exception as e:
-        print(f"DICOM validation error: {str(e)}")
-        return False
-
 @app.post("/api/process-scans/{run_id}")
-def start_processing(run_id: str, background_tasks: BackgroundTasks):
+async def start_processing(run_id: str, background_tasks: BackgroundTasks):
     try:
         base_dir = os.path.join(UPLOAD_FOLDER, run_id)
         
@@ -445,6 +417,7 @@ def start_processing(run_id: str, background_tasks: BackgroundTasks):
         
         # Initialize processing status
         processing_status[run_id] = {
+            'total_patients': len(patient_dirs),
             'patients': {
                 patient_dir: {
                     'status': 'pending',
@@ -458,11 +431,12 @@ def start_processing(run_id: str, background_tasks: BackgroundTasks):
             }
         }
         
-        # Add to background tasks instead of creating asyncio task
+        # Add to background tasks
         background_tasks.add_task(process_all_patients, run_id, dicoms_dir, patient_dirs)
         
         return JSONResponse({
             'message': f"Processing started for {len(patient_dirs)} patients",
+'total_patients': len(patient_dirs),
             'patients': patient_dirs
         })
         
@@ -477,118 +451,65 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
     """Process all patients sequentially with progress updates"""
     try:
         print(f"\nStarting processing for run {run_id}...")
-        global processing_status  # Add this line to access global variable
-        
-        # Initialize processing status if not exists
-        if run_id not in processing_status:
-            processing_status[run_id] = {
-                'patients': {
-                    patient_dir: {
-                        'status': 'pending',
-                        'steps': {
-                            'preprocessing': 'pending',
-                            'msxplain': 'pending',
-                            'report': 'pending'
-                        }
-                    }
-                    for patient_dir in patient_dirs
-                }
-            }
-        
+        global processing_status
+
         for i, patient_dir in enumerate(patient_dirs):
             try:
-                # Update status to processing
                 status = processing_status[run_id]['patients'][patient_dir]
                 status['status'] = 'processing'
                 
-                # Notify progress update
-                # notify_progress(run_id)
-                
                 print(f"\n[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
-                patient_path = os.path.join(base_dir, patient_dir)
                 
-                # Find FLAIR and T1 directories
-                flair_dir = None
-                t1_dir = None
-                
-                print(f"Searching for FLAIR and T1 in: {patient_path}")
-                for root, dirs, files in os.walk(patient_path):
-                    dir_name = os.path.basename(root).lower()
-                    if 'flair' in dir_name and not flair_dir:
-                        flair_dir = root
-                        print(f"Found FLAIR directory: {flair_dir}")
-                    elif 't1' in dir_name and not t1_dir:
-                        t1_dir = root
-                        print(f"Found T1 directory: {t1_dir}")
-                    if flair_dir and t1_dir:
-                        break
-                
-                if not flair_dir or not t1_dir:
-                    raise ValueError(f"Could not find FLAIR and T1 directories in {patient_path}")
-                
-                # Initialize MSXplainReport with correct output directory structure
-                # Change this line to avoid path duplication
-                patient_output_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_dir)
-                os.makedirs(patient_output_dir, exist_ok=True)
-                
-                print(f"Created output directory: {patient_output_dir}")
-                
-                msxplain = MSXplainReport(
-                    flair_dir=flair_dir,
-                    t1_dir=t1_dir,
-                    output_dir=patient_output_dir  # This will be the final path without duplication
-                )
-                
-                # Preprocessing step
-                print(f"Starting preprocessing for {patient_dir}...")
-                status['steps']['preprocessing'] = 'processing'
-                # notify_progress(run_id)
-                
-                nifti_files = msxplain.convert_dicoms_to_nifti()
-                preprocessed_files = msxplain.preprocess_images(nifti_files)
-                
-                status['steps']['preprocessing'] = 'completed'
-                print(f"Completed preprocessing for {patient_dir}")
-                # notify_progress(run_id)
-                
-                # MSXplain step
-                print(f"Starting MSXplain Report pipeline for {patient_dir}...")
-                status['steps']['msxplain'] = 'processing'
-                # notify_progress(run_id)
-                
-                prediction_file = msxplain.run_msxplain(preprocessed_files)
-                
-                if not os.path.exists(prediction_file):
-                    raise ValueError(f"MSXplain failed to generate prediction for {patient_dir}")
-                
-                status['steps']['msxplain'] = 'completed'
-                # notify_progress(run_id)
-                print(f"Completed MSXplain Report pipeline for {patient_dir}")
-                
-                # Report generation step
-                print(f"Starting report generation for {patient_dir}...")
-                status['steps']['report'] = 'processing'
-                # notify_progress(run_id)
-                
-                # Generate report
-                report_df = msxplain.generate_report(prediction_file)
-                
-                # Update report path to use correct structure
-                report_path = os.path.join(patient_output_dir, f"report_{patient_dir}.xlsx")
-                report_df.to_excel(report_path, index=False)
-                
-                if not os.path.exists(report_path):
-                    raise ValueError(f"Failed to save report for {patient_dir}")
-                
-                status['steps']['report'] = 'completed'
-                print(f"Completed report generation for {patient_dir}")
-                # notify_progress(run_id)
-                
-                # Mark patient as completed
-                status['status'] = 'completed'
-                print(f"Completed all processing for patient {patient_dir} [{i+1}/{len(patient_dirs)}]")
-                # notify_progress(run_id)
-                
+                # Create thread pool for CPU-intensive tasks
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    # Process each step in the thread pool
+                    patient_path = os.path.join(base_dir, patient_dir)
+                    patient_output_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_dir)
+                    os.makedirs(patient_output_dir, exist_ok=True)
+
+                    # Find FLAIR and T1 directories
+                    flair_dir, t1_dir = executor.submit(
+                        find_input_directories, patient_path
+                    ).result()
+
+                    # Preprocessing step
+                    status['steps']['preprocessing'] = 'processing'
+                    msxplain = MSXplainReport(
+                        flair_dir=flair_dir,
+                        t1_dir=t1_dir,
+                        output_dir=patient_output_dir
+                    )
+                    
+                    nifti_files = executor.submit(
+                        msxplain.convert_dicoms_to_nifti
+                    ).result()
+                    
+                    preprocessed_files = executor.submit(
+                        msxplain.preprocess_images, nifti_files
+                    ).result()
+                    
+                    status['steps']['preprocessing'] = 'completed'
+
+                    # MSXplain step
+                    status['steps']['msxplain'] = 'processing'
+                    prediction_file = executor.submit(
+                        msxplain.run_msxplain, preprocessed_files
+                    ).result()
+                    
+                    status['steps']['msxplain'] = 'completed'
+
+                    # Report generation step
+                    status['steps']['report'] = 'processing'
+                    report_df = executor.submit(
+                        msxplain.generate_report, prediction_file
+                    ).result()
+                    
+                    report_path = os.path.join(patient_output_dir, f"report_{patient_dir}.xlsx")
+                    report_df.to_excel(report_path, index=False)
+                    
+                    status['steps']['report'] = 'completed'
+                    status['status'] = 'completed'
+
             except Exception as e:
                 print(f"Error processing patient {patient_dir}: {str(e)}")
                 traceback.print_exc()
@@ -596,64 +517,66 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 for step in status['steps']:
                     if status['steps'][step] == 'processing':
                         status['steps'][step] = 'error'
-                # notify_progress(run_id)
-        
+
         print(f"\nAll processing completed for run {run_id}")
-        print("Final status:")
-        for patient, status in processing_status[run_id]['patients'].items():
-            print(f"- {patient}: {status['status']}")
         
     except Exception as e:
         print(f"Error in process_all_patients: {str(e)}")
         traceback.print_exc()
 
-# def notify_progress(run_id: str):
-#     """Notify progress to connected clients"""
-#     try:
-#         # Add a small delay to allow status updates to propagate
-#         asyncio.sleep(0.1)
-#     except Exception as e:
-#         # print(f"Error in notify_progress: {str(e)}")
+def find_input_directories(patient_path):
+    """Helper function to find FLAIR and T1 directories"""
+    flair_dir = None
+    t1_dir = None
+    
+    for root, dirs, files in os.walk(patient_path):
+        dir_name = os.path.basename(root).lower()
+        if 'flair' in dir_name and not flair_dir:
+            flair_dir = root
+        elif 't1' in dir_name and not t1_dir:
+            t1_dir = root
+        if flair_dir and t1_dir:
+            break
+            
+    if not flair_dir or not t1_dir:
+        raise ValueError(f"Could not find FLAIR and T1 directories in {patient_path}")
+        
+    return flair_dir, t1_dir
 
 @app.get("/api/process-status/{run_id}")
 async def get_process_status(run_id: str):
     try:
         print(f"Getting status for run: {run_id}")
         
-        # Get the run directory
+        # First check if run exists in processing_status
+        if run_id in processing_status:
+            return processing_status[run_id]
+            
+        # If not in processing_status, check if run exists in processed folder
         run_dir = os.path.join(PROCESSED_FOLDER, run_id)
-        if not os.path.exists(run_dir):
-            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-
-        patients = {}
-        
-        # Check each patient directory
-        for patient_dir in os.listdir(run_dir):
-            if os.path.isdir(os.path.join(run_dir, patient_dir)):
-                patient_path = os.path.join(run_dir, patient_dir)
-                
-                # Check status for each step
-                preprocessing_done = os.path.exists(os.path.join(patient_path, "flair_registered.nii.gz"))
-                msxplain_done = os.path.exists(os.path.join(patient_path, "lesion_map.nii.gz"))
-                report_done = os.path.exists(os.path.join(patient_path, f"report_{patient_dir}.xlsx"))
-                
-                patients[patient_dir] = {
-                    "steps": {
-                        "preprocessing": "completed" if preprocessing_done else "processing",
-                        "msxplain": "completed" if msxplain_done else 
-                                   "processing" if preprocessing_done else "pending",
-                        "report": "completed" if report_done else 
-                                 "processing" if msxplain_done else "pending"
+        if os.path.exists(run_dir):
+            # Create a status object for completed runs
+            all_patients = [
+                patient_dir for patient_dir in os.listdir(run_dir)
+                if os.path.isdir(os.path.join(run_dir, patient_dir))
+            ]
+            
+            return {
+                'total_patients': len(all_patients),
+                'patients': {
+                    patient_dir: {
+                        'status': 'completed',
+                        'steps': {
+                            'preprocessing': 'completed',
+                            'msxplain': 'completed',
+                            'report': 'completed'
+                        }
                     }
+                    for patient_dir in all_patients
                 }
-
-        response_data = {
-            "run_id": run_id,
-            "patients": patients
-        }
-        
-        print(f"Status response: {response_data}")
-        return response_data
+            }
+            
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
     except Exception as e:
         print(f"Error getting process status: {str(e)}")
@@ -670,36 +593,44 @@ async def get_processed_runs():
         for run_id in os.listdir(PROCESSED_FOLDER):
             run_dir = os.path.join(PROCESSED_FOLDER, run_id)
             if os.path.isdir(run_dir):
-                # Get patients in this run
-                patients = []
-                for patient_dir in os.listdir(run_dir):
-                    patient_path = os.path.join(run_dir, patient_dir)
-                    if os.path.isdir(patient_path):
-                        # Check if processing is complete
-                        report_path = os.path.join(patient_path, f"report_{patient_dir}.xlsx")
-                        status = "Complete" if os.path.exists(report_path) else "Processing"
-                        
-                        patients.append({
-                            "id": patient_dir,
-                            "status": status
-                        })
+                # Get all patient directories first
+                all_patients = [
+                    patient_dir for patient_dir in os.listdir(run_dir)
+                    if os.path.isdir(os.path.join(run_dir, patient_dir))
+                ]
                 
-                # Get run date from run_id
-                try:
-                    run_date = datetime.strptime(
-                        run_id.split('_')[1], 
-                        '%Y%m%d'
-                    ).strftime('%Y-%m-%d')
-                except:
-                    run_date = "Unknown"
+                # Create patient entries
+                patients = []
+                for patient_dir in all_patients:
+                    patient_path = os.path.join(run_dir, patient_dir)
+                    report_path = os.path.join(patient_path, f"report_{patient_dir}.xlsx")
+                    
+                    # Check if patient is in processing status
+                    run_status = processing_status.get(run_id, {}).get('patients', {}).get(patient_dir, {})
+                    if run_status and any(step == 'processing' for step in run_status.get('steps', {}).values()):
+                        status = "Processing"
+                    else:
+                        status = "Complete" if os.path.exists(report_path) else "Processing"
+                    
+                    patients.append({
+                        "id": patient_dir,
+                        "status": status
+                    })
+                
+                # Get total patients from processing status or fallback to directory count
+                total_patients = (processing_status.get(run_id, {}).get('total_patients') 
+                                or len(all_patients))
                 
                 runs.append({
                     "id": run_id,
-                    "date": run_date,
-                    "patients": patients
+                    "date": datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S'),
+                    "patients": patients,
+                    "total_patients": total_patients
                 })
         
-        return sorted(runs, key=lambda x: x['date'], reverse=True)
+        # Sort runs by date, most recent first
+        runs.sort(key=lambda x: x['date'], reverse=True)
+        return runs
         
     except Exception as e:
         print(f"Error getting processed runs: {str(e)}")
