@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import axios from "axios";
-import './styles.css';
+import './Viewer.css';
 
-const ThreeDImagePage = () => {
-  const { patient_name } = useParams(); // Obtener patient_name de los parámetros de la URL
+const Viewer = () => {
+  const { run_id, patient_name } = useParams();
   const [sliceNum, setSliceNum] = useState(0);
   const [displayedSlice, setDisplayedSlice] = useState(0);
   const [imageData, setImageData] = useState(null);
@@ -19,22 +18,25 @@ const ThreeDImagePage = () => {
   useEffect(() => {
     const fetchTotalLesions = async () => {
       try {
-        const response = await axios.get(`http://127.0.0.1:5000/api/total_lesions/${patient_name}`);
-        setLesionCounts(response.data);
+        const response = await fetch(
+          `http://localhost:5000/api/total_lesions/${run_id}/${patient_name}`
+        );
+        const data = await response.json(); // Add this line to parse the JSON
+        setLesionCounts(data);
       } catch (error) {
         console.error("Error fetching lesion info:", error);
       }
     };
     fetchTotalLesions();
-  }, [patient_name]);
+  }, [run_id, patient_name]);
 
   // Color mapping for the legend - matching backend colors exactly
   const lesionColors = {
-    'Deep White Matter': '#FF0000',             // Red
-    'Juxtacortical': '#00FF00',  // Green
+    'Deep White Matter': '#880808', // Red
+    'Juxtacortical': '#F88379',  // CoralPink
     'Periventricular': '#0000FF',// Blue
-    'Infratentorial': '#FFFF00', // Yellow
-    'False Positive': '#808080'  // Gray - match Excel naming
+    'Infratentorial': '#00FFFF', // Aqua
+    'False Positive': '#808080'  // Gray
   };
 
   const renderLesionInfo = () => {
@@ -84,22 +86,18 @@ const ThreeDImagePage = () => {
         timeoutId = setTimeout(async () => {
           setLoading(true);
           try {
-            const response = await axios.get(
-              `http://127.0.0.1:5000/api/slice/${patient_name}/${sliceNumber}`,
-              {
-                params: { show_false_positives: showFalsePositives },
-                responseType: 'arraybuffer'
-              }
+            const response = await fetch(
+              `http://localhost:5000/api/slice/${run_id}/${patient_name}/${sliceNumber}?show_false_positives=${showFalsePositives}`
             );
             
             // Update max slice number from headers if available
-            const totalSlices = response.headers['x-total-slices'];
+            const totalSlices = response.headers.get('x-total-slices');
             if (totalSlices) {
               setMaxSlice(parseInt(totalSlices) - 1);
             }
             
             const base64 = btoa(
-              new Uint8Array(response.data)
+              new Uint8Array(await response.arrayBuffer())
                 .reduce((data, byte) => data + String.fromCharCode(byte), '')
             );
             
@@ -116,7 +114,7 @@ const ThreeDImagePage = () => {
         }, 300);
       };
     })(),
-    [showFalsePositives, patient_name]
+    [showFalsePositives, run_id, patient_name]
   );
 
   // Effect to load the image when sliceNum changes
@@ -155,63 +153,73 @@ const ThreeDImagePage = () => {
   }, [isMouseOverImage]);
 
   return (
-    <div className="viewer-container">
-      <div className="navigation-bar">
-        <Link to={`/report/${patient_name}`} className="back-button">
-          Back to Report
-        </Link>
-      </div>
-      
-      <header className="viewer-header">
-        <h1>Brain Slice Viewer</h1>
-        <div className="viewer-controls">
-          <button 
-            className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
-            onClick={() => setShowFalsePositives(!showFalsePositives)}
+    <div className="page-container">
+      <nav className="navigation-bar">
+        <div className="nav-left">
+          <Link 
+            to={`/report/${run_id}/${patient_name}`} 
+            className="back-button"
           >
-            {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
-          </button>
-          {renderLesionInfo()}
+            ← Back to Report
+          </Link>
         </div>
-      </header>
-      
-      <div 
-        className="image-container" 
-        onWheel={handleWheel}
-        onMouseEnter={() => setIsMouseOverImage(true)}
-        onMouseLeave={() => setIsMouseOverImage(false)}
-      >
-        {error && <p className="error-message">{error}</p>}
-        {loading ? (
-          <div className="loading-container">
-            <p>Loading slice {sliceNum}...</p>
+        <div className="nav-center">
+          <h2>Viewer (Patient: {patient_name})</h2>
+        </div>
+        <div className="nav-right" />
+      </nav>
+
+      <div className="viewer-content">
+        <div className="content-container">
+          <div className="viewer-controls">
+            <button 
+              className={`toggle-button ${showFalsePositives ? 'active' : ''}`}
+              onClick={() => setShowFalsePositives(!showFalsePositives)}
+            >
+              {showFalsePositives ? 'Show True Lesions' : 'Show False Positives'}
+            </button>
+            {renderLesionInfo()}
           </div>
-        ) : (
-          imageData && (
-            <div className="image-wrapper">
-              <img
-                src={imageData}
-                alt={`Brain slice ${displayedSlice}`}
-                className="brain-slice-image"
-              />
-            </div>
-          )
-        )}
-      </div>
-      
-      <div className="controls">
-        <input
-          type="range"
-          min="0"
-          max={maxSlice}
-          value={sliceNum}
-          onChange={(e) => setSliceNum(parseInt(e.target.value))}
-          className="slice-slider"
-        />
-        <p>Slice: {sliceNum} / {maxSlice}</p>
+          
+          <div 
+            className="image-container" 
+            onWheel={handleWheel}
+            onMouseEnter={() => setIsMouseOverImage(true)}
+            onMouseLeave={() => setIsMouseOverImage(false)}
+          >
+            {error && <p className="error-message">{error}</p>}
+            {loading ? (
+              <div className="loading-container">
+                <p>Loading slice {sliceNum}...</p>
+              </div>
+            ) : (
+              imageData && (
+                <div className="image-wrapper">
+                  <img
+                    src={imageData}
+                    alt={`Brain slice ${displayedSlice}`}
+                    className="brain-slice-image"
+                  />
+                </div>
+              )
+            )}
+          </div>
+          
+          <div className="controls">
+            <input
+              type="range"
+              min="0"
+              max={maxSlice}
+              value={sliceNum}
+              onChange={(e) => setSliceNum(parseInt(e.target.value))}
+              className="slice-slider"
+            />
+            <p>Slice: {sliceNum} / {maxSlice}</p>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-export default ThreeDImagePage;
+export default Viewer;

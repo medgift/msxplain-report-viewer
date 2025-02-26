@@ -1,0 +1,60 @@
+{
+  "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/meta_schema_20220324.json",
+  "version": "0.1.0",
+  "changelog": {
+    "0.1.0": "First working version of the model"
+  },
+  "monai_version": "1.1.0",
+  "pytorch_version": "2.0.0+cu117",
+  "numpy_version": "1.24.2",
+  "optional_packages_version": {
+    "nibabel": "5.0.1",
+    "pytorch-ignite": "0.4.9",
+    "scikit-learn": "1.2.2"
+  },
+  "name": "MSxplain",
+  "task": "",
+  "description": "",
+  "authors": "",
+  "copyright": "",
+  "data_source": "",
+  "data_type": "nibabel",
+  "image_classes": "2 channel data, FLAIR & MPRAGE at 1x1x1 mm",
+  "label_classes": "2 channel data, channel 0 for Background, channel 1 for WML",
+  "pred_classes": "2 channel data, same as label_classes",
+  "eval_metrics": {},
+  "intended_use": "This is an example, not to be used for diagnostic purposes",
+  "references": [],
+  "network_data_format": {
+    "inputs": {
+      "image": {
+        "type": "image",
+        "format": "magnitude",
+        "modality": "MR",
+        "num_channels": 2,
+        "spatial_shape": ["8*n", "8*n", "8*n"],
+        "dtype": "float32",
+        "value_range": [],
+        "is_patch_data": false,
+        "channel_def": {
+          "0": "FLAIR",
+          "1": "MPRAGE"
+        }
+      }
+    },
+    "outputs": {
+      "pred": {
+        "type": "image",
+        "format": "segmentation",
+        "num_channels": 2,
+        "spatial_shape": ["8*n", "8*n", "8*n"],
+        "dtype": "float32",
+        "value_range": [0, 1],
+        "is_patch_data": true,
+        "channel_def": {
+          "0": "WML"
+        }
+      }
+    }
+  }
+}
