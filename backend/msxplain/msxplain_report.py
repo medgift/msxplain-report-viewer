@@ -5,21 +5,30 @@ from pathlib import Path
 import time
 import pydicom
 import glob
+import yaml
 from .predict import predict_msxplain
 from .samseg_processing import run_samseg_processing
 from .lesion_information import generate_lesion_report
 
-# Set FSLDIR and  FREESURFER and ANTs PATH
-fsl_dir = "/home/lluis/msxplain/fsl"
+def load_config():
+    config_path = Path(__file__).parent.parent / 'config.yml'
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+# Load configuration
+config = load_config()
+
+# Set FSLDIR and FREESURFER and ANTs PATH
+fsl_dir = config['paths']['fsl_dir']
 os.environ["FSLDIR"] = fsl_dir
 os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
 os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
 
-freesurfer_home = "/home/lluis/msxplain/freesurfer_7.4.1"
+freesurfer_home = config['paths']['freesurfer_home']
 os.environ["FREESURFER_HOME"] = freesurfer_home
 os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
 
-ants_dir = "/home/lluis/msxplain/ANTs/install"
+ants_dir = os.path.join(config['paths']['ants_dir'], "install")
 os.environ["ANTsDIR"] = ants_dir
 os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
 
