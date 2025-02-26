@@ -32,11 +32,11 @@ const Viewer = () => {
 
   // Color mapping for the legend - matching backend colors exactly
   const lesionColors = {
-    'Deep White Matter': '#FF0000',             // Red
-    'Juxtacortical': '#00FF00',  // Green
+    'Deep White Matter': '#880808', // Red
+    'Juxtacortical': '#F88379',  // CoralPink
     'Periventricular': '#0000FF',// Blue
-    'Infratentorial': '#FFFF00', // Yellow
-    'False Positive': '#808080'  // Gray - match Excel naming
+    'Infratentorial': '#00FFFF', // Aqua
+    'False Positive': '#808080'  // Gray
   };
 
   const renderLesionInfo = () => {

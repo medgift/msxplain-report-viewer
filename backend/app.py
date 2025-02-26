@@ -196,6 +196,12 @@ async def get_total_lesions(run_id: str, patient_name: str):
             content={"error": str(e)},
             status_code=500
         )
+        
+        
+def hex_to_rgb(hex):
+  return tuple(int(hex[i:i+2], 16) for i in (0, 2, 4))
+
+hex_to_rgb('FFA501') # (255, 165, 1)
 
 @app.get("/api/slice/{run_id}/{patient_name}/{slice_num}")
 async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_positives: bool = False):
@@ -236,11 +242,11 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         
         # Define colors for each lesion type
         lesion_type_colors = {
-            'Deep White Matter': (255, 0, 0),              # Red
-            'Juxtacortical': (0, 255, 0),   # Green
-            'Periventricular': (0, 0, 255), # Blue
-            'Infratentorial': (255, 255, 0), # Yellow
-            'False Positive': (128, 128, 128) # Gray - match Excel naming
+                'Deep White Matter': hex_to_rgb('880808'), # Red
+                'Juxtacortical': hex_to_rgb('F88379'), # CoralPink
+                'Periventricular': hex_to_rgb('0000FF'), # Blue
+                'Infratentorial': hex_to_rgb('00FFFF'), # Aqua
+                'False Positive': hex_to_rgb('808080')  # Gray
         }
         
         # Create RGBA image with brain background
