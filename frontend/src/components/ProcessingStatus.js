@@ -102,7 +102,7 @@ const ProcessingStatus = () => {
     <div className="page-container">
       <nav className="navigation-bar">
         <div className="nav-left">
-          <Link to="/upload" className="back-button">← Back to Upload</Link>
+          <Link to="/" className="back-button">← Back to Home</Link>
         </div>
         <div className="nav-center">
           <h2>Processing Status</h2>
@@ -110,67 +110,81 @@ const ProcessingStatus = () => {
         <div className="nav-right" />
       </nav>
 
-      <div className="processing-container">
-        {error && (
-          <div className="error-message">
-            Error: {error}
+      <div className="processing-content">
+        {error && <div className="error-message">{error}</div>}
+        
+        {processingStatus?.status === 'inactive' ? (
+          <div className="inactive-message">
+            <h3>No Active Works</h3>
+            <p>There are currently no scans being processed.</p>
+            <Link to="/upload" className="action-button">
+              Upload New Scans
+            </Link>
           </div>
-        )}
-
-        {!activeRun && (
-          <div className="no-processing">
-            <p>No active processing run found.</p>
-            <Link to="/upload" className="action-button">Start New Processing</Link>
-          </div>
-        )}
-
-        {activeRun && processingStatus?.patients && (
-          <div className="processing-status">
-            <div className="run-container">
-              <div className="run-header">
-                <h2 className="run-id">Run: {activeRun}</h2>
-                <div className="run-progress">
-                  <span className="progress-count">
-                    {getCompletedCount(processingStatus?.patients || {})}/
-                    {getTotalPatients(processingStatus)} Completed
-                  </span>
-                  <div className="progress-bar">
-                    <div 
-                      className="progress-fill"
-                      style={{ 
-                        width: `${(getCompletedCount(processingStatus?.patients || {}) / 
-                                 Math.max(getTotalPatients(processingStatus), 1)) * 100}%` 
-                      }}
-                    />
-                  </div>
-                </div>
+        ) : (
+          <div className="processing-container">
+            {error && (
+              <div className="error-message">
+                Error: {error}
               </div>
+            )}
 
-              {(() => {
-                const processingPatient = getCurrentlyProcessingPatient(processingStatus.patients);
-                if (!processingPatient) return null;
+            {!activeRun && (
+              <div className="no-processing">
+                <p>No active processing run found.</p>
+                <Link to="/upload" className="action-button">Start New Processing</Link>
+              </div>
+            )}
 
-                const [patientId, status] = processingPatient;
-                return (
-                  <div key={patientId} className="patient-card processing">
-                    <h3>Processing Patient: {patientId}</h3>
-                    <div className="steps-container">
-                      {Object.entries(status.steps).map(([step, stepStatus]) => (
-                        <div key={step} className={`step-status ${stepStatus}`}>
-                          <span className="step-label">{step}</span>
-                          <span className="step-value">
-                            {stepStatus === 'processing' && '⚙️ '}
-                            {stepStatus === 'completed' && '✅ '}
-                            {stepStatus === 'pending' && '⏳ '}
-                            {stepStatus}
-                          </span>
-                        </div>
-                      ))}
+            {activeRun && processingStatus?.patients && (
+              <div className="processing-status">
+                <div className="run-container">
+                  <div className="run-header">
+                    <h2 className="run-id">Run: {activeRun}</h2>
+                    <div className="run-progress">
+                      <span className="progress-count">
+                        {getCompletedCount(processingStatus?.patients || {})}/
+                        {getTotalPatients(processingStatus)} Completed
+                      </span>
+                      <div className="progress-bar">
+                        <div 
+                          className="progress-fill"
+                          style={{ 
+                            width: `${(getCompletedCount(processingStatus?.patients || {}) / 
+                                     Math.max(getTotalPatients(processingStatus), 1)) * 100}%` 
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                );
-              })()}
-            </div>
+
+                  {(() => {
+                    const processingPatient = getCurrentlyProcessingPatient(processingStatus.patients);
+                    if (!processingPatient) return null;
+
+                    const [patientId, status] = processingPatient;
+                    return (
+                      <div key={patientId} className="patient-card processing">
+                        <h3>Processing Patient: {patientId}</h3>
+                        <div className="steps-container">
+                          {Object.entries(status.steps).map(([step, stepStatus]) => (
+                            <div key={step} className={`step-status ${stepStatus}`}>
+                              <span className="step-label">{step}</span>
+                              <span className="step-value">
+                                {stepStatus === 'processing' && '⚙️ '}
+                                {stepStatus === 'completed' && '✅ '}
+                                {stepStatus === 'pending' && '⏳ '}
+                                {stepStatus}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
