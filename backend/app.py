@@ -554,6 +554,15 @@ async def get_process_status(run_id: str):
     try:
         print(f"Getting status for run: {run_id}")
         
+        # Check if any processing is active
+        if not processing_status:
+            return JSONResponse({
+                'message': 'No active processing',
+                'status': 'inactive',
+                'total_patients': 0,
+                'patients': {}
+            })
+            
         # First check if run exists in processing_status
         if run_id in processing_status:
             return processing_status[run_id]
@@ -568,6 +577,7 @@ async def get_process_status(run_id: str):
             ]
             
             return {
+                'status': 'completed',
                 'total_patients': len(all_patients),
                 'patients': {
                     patient_dir: {
@@ -581,13 +591,22 @@ async def get_process_status(run_id: str):
                     for patient_dir in all_patients
                 }
             }
-            
-        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        # If run is not found anywhere, return inactive status
+        return JSONResponse({
+            'message': f'Run {run_id} not found',
+            'status': 'inactive',
+            'total_patients': 0,
+            'patients': {}
+        })
 
     except Exception as e:
         print(f"Error getting process status: {str(e)}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({
+            'error': str(e),
+            'status': 'error'
+        }, status_code=500)
 
 @app.get("/api/processed-runs")
 async def get_processed_runs():

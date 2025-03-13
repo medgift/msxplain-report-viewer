@@ -181,3 +181,23 @@
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 1.5rem;
 }
+
+.inactive-message {
+  text-align: center;
+  padding: 3rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin: 2rem auto;
+  max-width: 600px;
+}
+
+.inactive-message h3 {
+  color: var(--primary-color);
+  margin-bottom: 1rem;
+}
+
+.inactive-message p {
+  margin-bottom: 2rem;
+  color: #666;
+}
