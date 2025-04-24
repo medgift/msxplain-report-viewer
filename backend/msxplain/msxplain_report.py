@@ -188,6 +188,10 @@ class MSXplainReport:
         nifti_files['flair_registered'] = final_flair
         
         return nifti_files
+    
+    def register_lesion_map_to_flair(self):
+        """Transform lesion map to the original space"""
+        #TODO: Using invert_simple.py function
 
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
