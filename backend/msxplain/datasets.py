@@ -70,19 +70,10 @@ class NiftiDataset(CacheDataset):
         self.target_filepaths = get_filepaths(target_path, target_prefix)
         self.balmask_filepaths = get_filepaths(balmask_path, balmask_prefix)
 
-        # idx_stay = get_nonzero_targets(self.target_filepaths)
-        #
-        # self.target_filepaths = [filename for i_f, filename in enumerate(self.target_filepaths)
-        #                          if i_f in idx_stay]
-        # self.input_filepaths = [filename for i_f, filename in enumerate(self.input_filepaths)
-        #                         if i_f in idx_stay]
-
         to_check_filepaths = self.input_filepaths + [self.target_filepaths]
         to_check_prefix = input_prefixes + [target_prefix]
         modality_names = input_names + ["targets"]
         if self.balmask_filepaths is not None:
-            # self.balmask_filepaths = [filename for i_f, filename in enumerate(self.balmask_filepaths)
-            #                           if i_f in idx_stay]
             to_check_filepaths += [self.balmask_filepaths]
             to_check_prefix += [balmask_prefix]
             modality_names += ["balance_mask"]
