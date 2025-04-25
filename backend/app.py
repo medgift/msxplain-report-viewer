@@ -494,10 +494,6 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.run_msxplain, preprocessed_files
                             ).result()
                             
-                            # Register lesion_map to Flair original space
-                            # executor.submit(
-                            #     msxplain.register_lesion_map_to_flair)
-                            
                             status['steps']['msxplain'] = 'completed'
 
                             # Report generation step
@@ -507,7 +503,13 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             ).result()
                             
                             report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
+                            print(report_path)
                             report_df.to_excel(report_path, index=False)
+                            
+                            # Register lesion_map to Flair original space
+                            lesion_map_flair_space = executor.submit(
+                                msxplain.register_lesion_map_to_flair
+                            ).result()
                             
                             status['steps']['report'] = 'completed'
                             status['status'] = 'completed'

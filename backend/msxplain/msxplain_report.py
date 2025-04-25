@@ -1,14 +1,16 @@
 import os
+import glob
 import subprocess
 import traceback
 from pathlib import Path
 import time
-import pydicom
-import glob
 import yaml
+import pydicom
+import SimpleITK as sitk
 from .predict import predict_msxplain
 from .samseg_processing import run_samseg_processing
 from .lesion_information import generate_lesion_report
+from .utils.utils import parse_transform_params
 
 def load_config():
     config_path = Path(__file__).parent.parent / 'config.yml'
@@ -191,7 +193,53 @@ class MSXplainReport:
     
     def register_lesion_map_to_flair(self):
         """Transform lesion map to the original space"""
-        #TODO: Using invert_simple.py function
+        
+        try:
+
+            # === Define paths to the images ===
+            fixed_image_path = f'{self.output_dir}/flair_n4.nii.gz'
+            moving_image_path = f'{self.output_dir}/lesion_map.nii.gz'
+
+            # === Read transform parameters from file ===
+            param_file = f'{self.output_dir}/registration/TransformParameters.0.txt'
+
+
+            # === Get transform parameters from file ===
+            rotation_angles, translation, center_of_rotation = parse_transform_params(param_file)
+            print("Rotation angles:", rotation_angles)
+            print("Translation:", translation)
+            print("Center of rotation:", center_of_rotation)
+
+            # === Load the lesion map and FLAIR image ===
+            lesion_map = sitk.ReadImage(moving_image_path, sitk.sitkFloat32)
+            flair_image = sitk.ReadImage(fixed_image_path, sitk.sitkFloat32)
+
+            # === Create original Euler transform ===
+            transform = sitk.Euler3DTransform()
+            transform.SetCenter(center_of_rotation)
+            transform.SetRotation(*rotation_angles)
+            transform.SetTranslation(translation)
+
+            # === Invert the transform ===
+            inverse_transform = transform.GetInverse()
+
+            # === Resample lesion map into original FLAIR space ===
+            lesion_map_flair_space = sitk.Resample(lesion_map,
+                                                flair_image,
+                                                inverse_transform,
+                                                sitk.sitkNearestNeighbor,  # Use NN for labels
+                                                0.0,  # Default pixel value
+                                                lesion_map.GetPixelID())
+
+            # === Save the result ===
+            sitk.WriteImage(lesion_map_flair_space, f"{self.output_dir}/lesion_map_flair_space.nii.gz")
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error in registering lesion map: {str(e)}")
+            traceback.print_exc()
+            return None
 
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
