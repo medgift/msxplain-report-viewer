@@ -71,10 +71,8 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         # Load model weights
         print(f"Loading model weights from {model_checkpoint}")
         if torch.cuda.is_available():
-            model = torch.nn.DataParallel(model)
             model.load_state_dict(torch.load(model_checkpoint, map_location='cuda'))
         else:
-            model = torch.nn.DataParallel(model)
             model.load_state_dict(torch.load(model_checkpoint, map_location='cpu'))
         
         model.eval()
