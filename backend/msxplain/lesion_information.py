@@ -89,8 +89,8 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
 
         # Process segmentation masks
         seg_cortex = ndimage.binary_dilation(seg_cortex_undil, structure=struct1, iterations=1)
-        seg_infratentorial = seg_infratentorial_undil.astype(int)
-        seg_ventricles = ndimage.binary_dilation(seg_ventricles_undil, structure=struct1, iterations=2).astype(int)
+        seg_infratentorial = ndimage.binary_dilation(seg_infratentorial_undil, structure=struct1, iterations=1).astype(int)
+        seg_ventricles = ndimage.binary_dilation(seg_ventricles_undil, structure=struct1, iterations=1).astype(int)
         seg_wm = ndimage.binary_dilation(seg_wm_undil, structure=struct1, iterations=2).astype(int)
 
         # Process each lesion
@@ -102,7 +102,7 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
             com = (int(com[0]), int(com[1]), int(com[2]))
 
             # Determine lesion type
-            cortex = np.sum(lesion_seg & seg_cortex)
+            cortex = bool(np.sum(lesion_seg & seg_cortex))
             infratentorial = bool(np.sum(lesion_seg & seg_infratentorial))
             periventricular = bool(np.sum(lesion_seg & seg_ventricles))
             wm = bool(np.sum(lesion_seg & seg_wm))
@@ -111,7 +111,7 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
                 lesion_type = 'Infratentorial'
             elif periventricular:
                 lesion_type = 'Periventricular'
-            elif cortex > 5:
+            elif cortex:
                 lesion_type = 'Juxtacortical'
             elif wm:
                 lesion_type = 'Deep White Matter'

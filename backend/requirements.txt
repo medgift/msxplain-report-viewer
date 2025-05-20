@@ -1,4 +1,10 @@
 pandas
 fastapi
 uvicorn
+pydicom
+pydicom_seg
 SimpleITK
+hd-bet
+opencv-python
+palettable
+dcmrtstruct2nii

@@ -1,5 +1,6 @@
 import traceback
 import os
+from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, Response, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +13,9 @@ from io import BytesIO
 from PIL import Image
 import pydicom
 from typing import List, Dict
-import shutil
 from msxplain.msxplain_report import MSXplainReport
 from fastapi.background import BackgroundTasks
 from concurrent.futures import ThreadPoolExecutor
-# from nifti_to_seg.nifti_to_seg import nifti_to_seg
-import SimpleITK
 
 app = FastAPI()
 
@@ -502,8 +500,11 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.generate_report, prediction_file
                             ).result()
                             
+                            labels_path = executor.submit(
+                                msxplain.compute_labels, report_df
+                            ).result()
+                            
                             report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
-                            print(report_path)
                             report_df.to_excel(report_path, index=False)
                             
                             # Register lesion_map to Flair original space
@@ -513,7 +514,22 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             
                             status['steps']['report'] = 'completed'
                             status['status'] = 'completed'
-
+                            
+                            lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
+                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space.nii.gz"))
+                            
+                            # Convert segmentation to DICOM-SEG
+                            print("Converting NIFTI label maps to DCM SEG...")
+                            dcmseg_flair = executor.submit(
+                                msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
+                            ).result()
+                            
+                            dcmseg_t1n = executor.submit(
+                                msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
+                            ).result()
+                            
+                            
+                            
                             # Convert segmentation to DICOM-SEG
                             # seg_path = os.path.join(patient_output_dir, "segmentation.nii.gz")
                             # dicom_dir = os.path.join(patient_path, "dicoms")
