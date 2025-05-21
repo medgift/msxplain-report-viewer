@@ -293,3 +293,44 @@ def compare(image_1, image_2, rel_to=2, mode='same-id'):
         df = None
 
     return df
+
+# def rgb_to_xyz(rgb):
+#     # Normalize to [0, 1]
+#     r, g, b = [x / 255.0 for x in rgb]
+
+#     # sRGB to linear RGB
+#     def to_linear(c):
+#         return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+#     r, g, b = map(to_linear, [r, g, b])
+
+#     # Convert to XYZ using D65 illuminant
+#     x = r * 0.4124 + g * 0.3576 + b * 0.1805
+#     y = r * 0.2126 + g * 0.7152 + b * 0.0722
+#     z = r * 0.0193 + g * 0.1192 + b * 0.9505
+    
+#     return [x, y, z]
+
+# def xyz_to_lab(xyz):
+#     # Reference white point D65
+#     x, y, z = [v / r for v, r in zip(xyz, [0.95047, 1.00000, 1.08883])]
+
+#     def f(t):
+#         return t ** (1/3) if t > 0.008856 else (7.787 * t) + (16 / 116)
+    
+#     fx, fy, fz = f(x), f(y), f(z)
+#     L = (116 * fy) - 16
+#     a = 500 * (fx - fy)
+#     b = 200 * (fy - fz)
+    
+#     return [L, a, b]
+
+# def rgb_to_dicom_cielab(rgb):
+#     xyz = rgb_to_xyz(rgb)
+#     lab = xyz_to_lab(xyz)
+    
+#     # Scale to DICOM 16-bit
+#     L_dcm = int((lab[0] / 100.0) * 65535 + 0.5)
+#     a_dcm = int(((lab[1] + 128) / 255.0) * 65535 + 0.5)
+#     b_dcm = int(((lab[2] + 128) / 255.0) * 65535 + 0.5)
+    
+#     return [L_dcm, a_dcm, b_dcm]
