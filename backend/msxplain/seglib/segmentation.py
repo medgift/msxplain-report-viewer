@@ -6,7 +6,6 @@ import re
 import pandas as pd
 import itertools
 from pydicom import dcmread
-# from .rt_utils import RTStructBuilder
 import pydicom_seg
 from palettable.tableau import tableau
 import pydicom
@@ -16,7 +15,7 @@ from .helpers import get_segment, intersection_bin_mask, get_boolean_masks_from_
 from .labels import Labels
 
 # Get color palette
-colormap = tableau.get_map("Tableau_20")
+# colormap = tableau.get_map("Tableau_20")
 
 
 
@@ -186,28 +185,6 @@ class Segmentation():
         else:
             name = None
         return roi_id, abbr, name
-
-
-
-    def _init_dcm_rtstruct(self, p_dcm_rtstruct, p_dcm_ref, warn_only=False):
-        """
-        This function uses rt-utils https://github.com/qurit/rt-utils to read DCM RTSTRUCT files and initialize segmentation.
-        :param p_dcm_rtstruct: path to RTSTRUCT file
-        :param p_dcm_ref: path to folder with reference DICOM image files (required bz rt-utils)
-        :return: None
-        """
-        logging.info(f"Initialization from DCM RTSTRUCT file: {p_dcm_rtstruct}")
-        # read RTSTRUCT
-        rtstruct = RTStructBuilder.create_from(dicom_series_path=p_dcm_ref, rt_struct_path=p_dcm_rtstruct, warn_only=warn_only)
-        roi_names = rtstruct.get_roi_names()
-        # use dcm_ref as reference for metadata
-        sitk_img_dcm_ref = read_image_files(p_dcm_ref)
-        self.meta_data = get_metadata_from_seg(sitk_img_dcm_ref)
-        self.p_dcm_ref = p_dcm_ref
-        # add ROIs
-        for roi_name in roi_names:
-            bool_mask = rtstruct.get_roi_mask_by_name(roi_name).swapaxes(1, 2).swapaxes(1, 0)
-            self.add_roi(bool_mask, name=roi_name)
 
     def _init_dcm_rtstruct_2(self, p_dcm_rtstruct, p_dcm_ref):
         """
@@ -490,8 +467,6 @@ class Segmentation():
             self.write_seg_as_dcm_seg_multiclass(p=p, base_name=base_name, p_ref=p_ref)
         else:
             logging.fatal(f"Mode {mode} undefined. Choose from modes 'masks' or 'labelmap'")
-        if self._has_labels():
-            self.labels.write_labels(p.joinpath(label_name))
 
 
     def write_seg_as_boolean_masks(self, p: Path, base_name: str, p_ref=None):
@@ -540,9 +515,10 @@ class Segmentation():
         # setting target orientation if requested
         self.set_target_orientation_from_file(p_ref)
         # get dcm-seg file
-        labelmap_dcm_seg = self.get_labelmap_as_dcm_seg(p_ref)
+        labelmap_dcm_seg = self.get_labelmap_as_dcm_seg(p_ref, base_name)
         if not labelmap_dcm_seg is None:
             dcm_seg_name = self._create_dcm_seg_name(base_name)
+            
             p_out = p.joinpath(dcm_seg_name)
             logging.debug(f"Writing DCM-SEG to {p_out}")
             labelmap_dcm_seg.save_as(p_out.as_posix())
@@ -593,34 +569,7 @@ class Segmentation():
         return labelmap_sitk
 
 
-    def get_labelmap_as_dcm_rtstruct(self, p_dcm_ref=None):
-        """
-        Uses rt-utils https://github.com/qurit/rt-utils to generate DCM-RTSTRUCT file from segmentation.
-        It relies on the rt-utils RTStructBuilder for creating DCM RTSTRUCT contours and files.
-        :param p_dcm_ref: path to reference dcm image files (required by RTStructBuilder)
-        :return: rt_utils.RTStructBuilder.create_new()
-        """
-        if (p_dcm_ref is None):
-            if hasattr(self, 'p_dcm_ref'):
-                logging.info(f"Using '{self.p_dcm_ref}' as reference DCM image for RTSTRUCT")
-                p_dcm_ref = self.p_dcm_ref
-
-        if p_dcm_ref is not None:
-            rtstruct = RTStructBuilder.create_new(dicom_series_path=p_dcm_ref.as_posix())
-            for roi in self.get_roi_ids():
-                # mask = self.get_roi(roi).swapaxes(0, 2).swapaxes(0, 1)
-                # below is somewhat inefficient, but ensures that mask orientation is adjusted to target orientation
-                # as this is handled by self.get_mask_as_sitk(roi))
-                mask = sitk.GetArrayFromImage(self.get_mask_as_sitk(roi)).astype(bool).swapaxes(0, 2).swapaxes(0, 1)
-                abbr = self.labels.get_abbreviation_from_roi_id(roi)
-                name = self.labels.get_name_from_roi_id(roi)
-                rtstruct.add_roi(mask=mask, color=None, name=abbr, description=name)
-        else:
-            logging.fatal(f"No DCM reference series specified. Needed for RTSTRUT construction")
-            rtstruct = None
-        return rtstruct
-
-    def get_labelmap_as_dcm_seg(self, p_dcm_ref=None):
+    def get_labelmap_as_dcm_seg(self, p_dcm_ref=None, base_name=None):
         """
         Uses pydicom-seg [https://github.com/razorx89/pydicom-seg] to generate DCM-SEG file from segmentation.
         It relies on the pydicom-seg's MultiClassWriter which enables simultaneous processing of multiple labels via
@@ -645,7 +594,7 @@ class Segmentation():
             # get labelmap (for MultiClass writer)
             labelmap_sitk = self.get_labelmap_as_sitk(no_overlap='enforce')
             # Generate template JSON file based on the ROI dict
-            dcm_seg_metadata = self._generate_metadata_for_dcm_seg()
+            dcm_seg_metadata = self._generate_metadata_for_dcm_seg(base_name)
             # create/define MultiClassWriter
             writer = pydicom_seg.MultiClassWriter(
                 template=dcm_seg_metadata,
@@ -659,16 +608,42 @@ class Segmentation():
             logging.fatal(f"No DCM reference series specified. Needed for DCM'SEG construction")
             dcm_seg = None
         return dcm_seg
+    
+    
 
-    def _generate_metadata_for_dcm_seg(self, series_description='segmentation'):
-        # create segments
+    def _generate_metadata_for_dcm_seg(self, base_name):
+        # Create segments
         segments = []
+        # Define label-to-CIELab mappings
+        label_to_rgb = {
+            "Periventricular": [139, 0, 0],         # Dark Red
+            "Juxtacortical": [255, 102, 102],     # Light Red
+            "Infratentorial": [0, 0, 139],         # Dark Blue
+            "Deep White Matter": [173, 216, 230],     # Light Blue
+        }
+        
+        label_names = ["Periventricular", "Juxtacortical", "Infratentorial", "Deep White Matter"]
         for i, roi in enumerate(self.get_roi_ids()):
             abbr = self.labels.get_abbreviation_from_roi_id(roi)
             name = self.labels.get_name_from_roi_id(roi)
-            color = colormap.colors[i % len(colormap.colors)]
+            if name in label_names:
+                if name == label_names[0]:
+                    color = label_to_rgb["Periventricular"]
+                elif name == label_names[1]:
+                    color = label_to_rgb["Juxtacortical"]
+                elif name == label_names[2]:
+                    color = label_to_rgb["Infratentorial"]
+                elif name == label_names[3]:
+                    color = label_to_rgb["Deep White Matter"]
+            
+            else:    
+                color = label_to_rgb["Periventricular"]
+                logging.warning(f"Label '{name}' not found in label_to_rgb mapping. Using default color.")
+            
             segments.append(get_segment(roi, abbr, name, color))
 
+        series_description=f"{base_name}_segmentation"
+        
         basic_info = {
             "ContentCreatorName": "XXX via pydicom-seg",
             "ClinicalTrialSeriesID": "Session1",
@@ -677,11 +652,12 @@ class Segmentation():
             "SeriesNumber": "300",
             "InstanceNumber": "1",
             "segmentAttributes": [segments],
-            "ContentLabel": "SEGMENTATION",
+            "ContentLabel": "DCM_SEG",
             "ContentDescription": "Image segmentation",
             "ClinicalTrialCoordinatingCenterName": "dcmqi",
             "BodyPartExamined": "",
         }
+        
         template = pydicom_seg.template.from_dcmqi_metainfo(basic_info)
         return template
 

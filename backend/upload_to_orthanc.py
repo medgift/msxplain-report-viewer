@@ -111,7 +111,7 @@ def upload_to_orthanc(base_folder: str) -> None:
 
 if __name__ == "__main__":
     try:
-        UPLOAD_FOLDER = "files/processed/run_20250520_103221/4031-5900/20220705"
+        UPLOAD_FOLDER = "files/processed/run_20250521_110026/4031-5900/20220705"
         upload_to_orthanc(UPLOAD_FOLDER)
     except KeyboardInterrupt:
         logger.info("Upload process interrupted by user")
