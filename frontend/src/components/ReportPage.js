@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import './ReportPage.css';
 
 const ReportPage = () => {
-  const { run_id, patient_name } = useParams(); // Get run_id and patient_name from URL parameters
+  const { run_id, patient_name, session } = useParams(); // Add session to URL parameters
   const [patientName, setPatientName] = useState(patient_name || ''); // Initialize state with patient_name from URL or empty string
   const [reportData, setReportData] = useState(null);
   const [error, setError] = useState(null);
@@ -11,10 +11,10 @@ const ReportPage = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (run_id && patient_name) {
+    if (run_id && patient_name && session) {  // Add session check
       setLoading(true);
       setError(null); // Clear previous error
-      fetch(`http://127.0.0.1:5000/api/report/${run_id}/${patient_name}`)
+      fetch(`http://127.0.0.1:5000/api/report/${run_id}/${patient_name}/${session}`)  // Add session to API call
         .then((response) => {
           if (!response.ok) {
             throw new Error('Report not found');
@@ -34,15 +34,23 @@ const ReportPage = () => {
           setLoading(false);
         });
     }
-  }, [run_id, patient_name]);
+  }, [run_id, patient_name, session]);  // Add session to dependency array
 
   const openMcDonaldCriteria = () => {
     window.open('/files/2017-McDonald-Criteria-PDF.pdf', '_blank');
   };
 
+  const openOHIFViewer = () => {
+    // Hardcode the OHIF URL since we know it's running on port 3000
+    const OHIF_URL = 'http://127.0.0.1/';    // Construct the full URL with study parameters
+    const viewerUrl = `${OHIF_URL}`;
+    // Open in new tab with security attributes
+    window.open(viewerUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const handleLoadReport = () => {
-    if (run_id) {
-      navigate(`/report/${run_id}/${patientName}`);
+    if (run_id && session) {  // Add session check
+      navigate(`/report/${run_id}/${patientName}/${session}`);  // Add session to navigation
     }
   };
 
@@ -56,9 +64,9 @@ const ReportPage = () => {
           <h2>MSXplain Report</h2>
         </div>
         <div className="nav-right">
-          <Link to={`/viewer/${run_id}/${patient_name}`} className="action-button">
-            Visualize Lesion Map
-          </Link>
+          <button onClick={openOHIFViewer} className="action-button">
+            View Images
+          </button>
           <button onClick={openMcDonaldCriteria} className="action-button">
             McDonald Criteria
           </button>
@@ -81,6 +89,7 @@ const ReportPage = () => {
               <div className="patient-info">
                 <p><strong>Patient Name:</strong> {reportData.patient_name}</p>
                 <p><strong>Patient ID:</strong> {reportData.patient_id}</p>
+                <p><strong>Session Date:</strong> {session}</p>  {/* Add session date display */}
                 <p><strong>Birth Date:</strong> {reportData.patient_birth_date}</p>
                 <p><strong>Sex:</strong> {reportData.patient_sex}</p>
               </div>

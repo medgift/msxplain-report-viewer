@@ -1,22 +1,15 @@
-import subprocess
-import traceback
 
-def run_command(command):
-    """Run a shell command and handle errors"""
-    try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
-        stdout, stderr = process.communicate()
-        
-        if process.returncode != 0:
-            raise Exception(f"Command failed: {stderr}")
-            
-        return stdout
-    except Exception as e:
-        print(f"Error running command {' '.join(command)}: {str(e)}")
-        traceback.print_exc()
-        raise
+
+def transform_registration_params(filename):
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            if 'TransformParameters' in line:
+                params = [float(x) for x in line.split('(TransformParameters ')[1].strip(')\n').split()]
+                rotation_angles = params[0:3]
+                translation = params[3:6]
+
+            elif 'CenterOfRotationPoint' in line:
+                center_of_rotation = [float(x) for x in line.split('(CenterOfRotationPoint ')[1].strip(')\n').split()]
+    
+    return rotation_angles, translation, center_of_rotation
