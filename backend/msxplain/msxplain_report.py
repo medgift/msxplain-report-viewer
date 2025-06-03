@@ -1,14 +1,20 @@
 import os
+import glob
 import subprocess
 import traceback
 from pathlib import Path
 import time
-import pydicom
-import glob
 import yaml
-from .predict import predict_msxplain
-from .samseg_processing import run_samseg_processing
-from .lesion_information import generate_lesion_report
+import pydicom
+import SimpleITK as sitk
+import torch
+import pandas as pd
+from .report_provider.predict import predict_msxplain
+from .report_provider.samseg_processing import run_samseg_processing
+from .report_provider.lesion_information import generate_lesion_report
+from .utils.utils import transform_registration_params
+from .seglib.segmentation import Segmentation
+
 
 def load_config():
     config_path = Path(__file__).parent.parent / 'config.yml'
@@ -40,7 +46,7 @@ class MSXplainReport:
             flair_dir (str): Directory containing FLAIR DICOM series
             t1_dir (str): Directory containing T1 DICOM series
             output_dir (str): Directory where to save results
-"""
+        """
         self.flair_dir = flair_dir
         self.t1_dir = t1_dir
         
@@ -55,7 +61,7 @@ class MSXplainReport:
         
         # Path to MSXplain resources
         self.msxplain_dir = Path(__file__).parent.absolute()
-        self.model_checkpoint = str(self.msxplain_dir / "model" / "model_epoch_31.pth")
+        self.model_checkpoint = str(self.msxplain_dir / "model" / "model_epoch_61.pth")
         self.registration_params = str(self.msxplain_dir / "configs/Parameters_Rigid.txt")
         
         # Validate model file exists
@@ -149,7 +155,7 @@ class MSXplainReport:
     def preprocess_images(self, nifti_files):
         """Run preprocessing steps on NIFTI files"""
 
-        print("Running FSL orientation and N4 bias field correction...")
+        print("Running FSL orientation...")
         
         # FSL orientation steps
         for img_path in [nifti_files['flair'], nifti_files['t1']]:
@@ -157,6 +163,8 @@ class MSXplainReport:
             self.run_command(["fslreorient2std", img_path])
         
         # N4 Bias field correction
+        print("Running N4 Bias field correction...")
+        
         for img_type in ['flair', 't1']:
             input_path = nifti_files[img_type]
             output_path = os.path.join(self.output_dir, f"{img_type}_n4.nii.gz")
@@ -166,6 +174,22 @@ class MSXplainReport:
                 "-o", output_path
             ])
             nifti_files[f"{img_type}_n4"] = output_path
+            
+        
+        # Brain extraction
+        print("Running Brain extraction...")
+        
+        for img_type in ['flair', 't1']:
+            input_path = nifti_files[f"{img_type}_n4"]
+            output_path = os.path.join(self.output_dir, f"{img_type}_brain.nii.gz")
+            self.run_command([
+                "hd-bet",
+                "-i", input_path,
+                "-o", output_path,
+                "-mode", "fast",
+                "-tta", "0"
+            ])
+            nifti_files[f"{img_type}_brain"] = output_path
         
         # Elastix registration
         print("Running Elastix registration...")
@@ -175,8 +199,8 @@ class MSXplainReport:
         
         self.run_command([
             "elastix",
-            "-f", nifti_files['t1_n4'],  # fixed image (T1)
-            "-m", nifti_files['flair_n4'],  # moving image (FLAIR)
+            "-f", nifti_files['t1_brain'],  # fixed image (T1)
+            "-m", nifti_files['flair_brain'],  # moving image (FLAIR)
             "-out", reg_dir,
             "-p", self.registration_params
         ])
@@ -188,6 +212,51 @@ class MSXplainReport:
         nifti_files['flair_registered'] = final_flair
         
         return nifti_files
+    
+    def register_lesion_map_to_flair(self):
+        """Transform lesion map to the original space"""
+        
+        try:
+
+            fixed_image_path = f'{self.output_dir}/flair_brain.nii.gz'
+            moving_image_path = f'{self.output_dir}/lesion_map.nii.gz'
+
+            # Read transform parameters from file
+            param_file = f'{self.output_dir}/registration/TransformParameters.0.txt'
+
+
+            # Get transform parameters from file
+            rotation_angles, translation, center_of_rotation = transform_registration_params(param_file)
+
+            # Load the lesion map and FLAIR image
+            lesion_map = sitk.ReadImage(moving_image_path, sitk.sitkFloat32)
+            flair_image = sitk.ReadImage(fixed_image_path, sitk.sitkFloat32)
+
+            # Create original Euler transform
+            transform = sitk.Euler3DTransform()
+            transform.SetCenter(center_of_rotation)
+            transform.SetRotation(*rotation_angles)
+            transform.SetTranslation(translation)
+
+            # Invert the transform
+            inverse_transform = transform.GetInverse()
+
+            # Resample lesion map into original FLAIR space
+            lesion_map_flair_space = sitk.Resample(lesion_map,
+                                                flair_image,
+                                                inverse_transform,
+                                                sitk.sitkNearestNeighbor,  # Use NN for labels
+                                                0.0,  # Default pixel value
+                                                lesion_map.GetPixelID())
+
+            sitk.WriteImage(lesion_map_flair_space, f"{self.output_dir}/lesion_map_flair_space.nii.gz")
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error in registering lesion map: {str(e)}")
+            traceback.print_exc()
+            return None
 
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
@@ -199,7 +268,7 @@ class MSXplainReport:
         # Run prediction with CUDA override
         prediction_file = predict_msxplain(
             input_val_paths=[self.output_dir, self.output_dir],  # Duplicate path for both inputs
-            input_prefixes=["flair_registered.nii.gz", "t1_n4.nii.gz"],  # Two input files
+            input_prefixes=["flair_registered.nii.gz", "t1_brain.nii.gz"],  # Two input files
             model_checkpoint=self.model_checkpoint,
             num_workers=0,
             cache_rate=0.1,
@@ -212,49 +281,57 @@ class MSXplainReport:
         
         run_samseg_processing(
             patient_dir=self.output_dir,
-            t1_path=os.path.join(self.output_dir, "t1_n4.nii.gz"),
+            t1_path=os.path.join(self.output_dir, "t1_brain.nii.gz"),
             pred_path=prediction_file
         )
         
+        with torch.no_grad():
+                torch.cuda.empty_cache()
+
         return prediction_file
 
     def generate_report(self, prediction_file):
         """Generate the final report"""
         
-        report_path = generate_lesion_report(
+        report_df = generate_lesion_report(
             patient_id=self.patient_id,
             flair_path=os.path.join(self.output_dir, "flair_registered.nii.gz"),
             pred_path=prediction_file,
             samseg_path=os.path.join(self.output_dir, "SAMSEG")
         )
         
-        return report_path
+        return report_df
+    
+    def compute_labels(self, report_df):
+        
+        # Get labels from report_df
+        labels_df = pd.DataFrame({
+            'roi_id': report_df['Lesion Index'],
+            'roi_name': report_df['Lesion Type']
+        })
+        
+        labels_path = os.path.join(self.output_dir, "labels.csv")
+        labels_df.to_csv(labels_path, index=False, header=False)
+        
+        return Path(labels_path)
+        
 
-    def run(self):
-        """Run the complete MSXplain pipeline"""
-        try:
-            start_time = time.time()
-            
-            # Convert DICOM to NIFTI
-            nifti_files = self.convert_dicoms_to_nifti()
-            
-            # Preprocess images
-            preprocessed_files = self.preprocess_images(nifti_files)
-            
-            # Run MSXplain prediction
-            prediction_file = self.run_msxplain(preprocessed_files)
-            
-            # Generate report
-            self.generate_report(prediction_file)
-            
-            elapsed_time = time.time() - start_time
-            hours, remainder = divmod(elapsed_time, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            
-            print(f"Processing completed in {int(hours)}h {int(minutes)}m {int(seconds)}s")
-            return True
-            
-        except Exception as e:
-            print(f"Error in MSXplain pipeline: {str(e)}")
-            traceback.print_exc()
-            return False
+    def nifti_to_dcmseg(self, lesion_map, labels_path, dcm_ref, out_basename):
+        """Convert NIFTI to DCM-SEG"""
+        
+        # Convert NIFTI to DCM-SEG
+        myseg = Segmentation(p_seg=lesion_map,
+                         p_labels=labels_path,
+                         p_dcm_ref=dcm_ref,
+                         mask_glob='*desc-*',
+                         regex='desc-\w+',
+                         rtstruct_converter='dcmrtstruct2nii',
+                         precision=5,)
+
+        myseg.write_seg(p=Path(self.output_dir),
+                        base_name=out_basename,
+                        mode='dcmseg',
+                        no_overlap = 'enforce',
+                        p_ref=dcm_ref
+                        )
+        return True

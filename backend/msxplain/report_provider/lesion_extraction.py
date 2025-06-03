@@ -1,7 +1,7 @@
 from scipy import ndimage
 import numpy as np
 from joblib import Parallel, delayed
-from msxplain.metrics import IoU_metric, IoU_adjusted_metric
+from .metrics import IoU_metric, IoU_adjusted_metric
 from functools import partial
 
 

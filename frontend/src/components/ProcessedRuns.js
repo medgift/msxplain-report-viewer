@@ -22,8 +22,8 @@ const ProcessedRuns = () => {
     fetchRuns();
   }, []);
 
-  const handleViewReport = (runId, patientId) => {
-    navigate(`/report/${runId}/${patientId}`);
+  const handleViewReport = (runId, patientId, session) => {
+    navigate(`/report/${runId}/${patientId}/${session.date}`);
   };
 
   const getTotalPatients = (run) => {
@@ -31,7 +31,18 @@ const ProcessedRuns = () => {
   };
 
   const getCompletedCount = (patients) => {
-    return patients.filter(patient => patient.status === "Complete").length;
+    return patients.filter(patient => 
+      patient.sessions.some(session => session.status === "Complete")
+    ).length;
+  };
+
+  const sortSessionsByDate = (sessions) => {
+    return [...sessions].sort((a, b) => {
+      // Convert date strings to Date objects for comparison
+      const dateA = new Date(a.date.replace(/(\d{4})-(\d{2})-(\d{2})/, '$1/$2/$3'));
+      const dateB = new Date(b.date.replace(/(\d{4})-(\d{2})-(\d{2})/, '$1/$2/$3'));
+      return dateB - dateA; // Sort descending (most recent first)
+    });
   };
 
   return (
@@ -70,20 +81,27 @@ const ProcessedRuns = () => {
             </div>
             
             <div className="patients-grid">
-              {run.patients
-                .filter(patient => patient.status === "Complete")
-                .map(patient => (
-                  <div key={patient.id} className="patient-card completed">
-                    <h4>Patient: {patient.id}</h4>
-                    <p>✅ Completed</p>
-                    <button
-                      onClick={() => handleViewReport(run.id, patient.id)}
-                      className="view-report-button"
-                    >
-                      View Report
-                    </button>
+              {run.patients.map(patient => (
+                <div key={patient.id} className="patient-card">
+                  <h4>Patient: {patient.id}</h4>
+                  <div className="sessions-container">
+                    {sortSessionsByDate(patient.sessions).map(session => (
+                      <div key={session.date} className="session-item">
+                        <span className={`session-status ${session.status.toLowerCase()}`}>
+                          {session.date}
+                        </span>
+                        <button
+                          onClick={() => handleViewReport(run.id, patient.id, session)}
+                          className={`view-report-button ${session.status.toLowerCase()}`}
+                          disabled={session.status !== 'Complete'}
+                        >
+                          View Report
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+              ))}
             </div>
           </div>
         ))}

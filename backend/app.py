@@ -1,5 +1,6 @@
 import traceback
 import os
+from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, Response, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +13,8 @@ from io import BytesIO
 from PIL import Image
 import pydicom
 from typing import List, Dict
-import shutil
 from msxplain.msxplain_report import MSXplainReport
+from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
 from fastapi.background import BackgroundTasks
 from concurrent.futures import ThreadPoolExecutor
 
@@ -66,11 +67,11 @@ def format_birth_date(date_str):
         return "Unknown"
 
 # Route to get data from the Excel file
-@app.get("/api/report/{run_id}/{patient_name}")          
-async def get_report(run_id: str, patient_name: str):
+@app.get("/api/report/{run_id}/{patient_name}/{session}")          
+async def get_report(run_id: str, patient_name: str, session: str):
     try:
-        # Construct the correct file path using run_id
-        file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report_{patient_name}.xlsx")
+        # Construct the correct file path using run_id and session
+        file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session, f"report_{patient_name}_{session}.xlsx")
         
         print(f"Looking for report at: {file_path}")
         
@@ -95,7 +96,7 @@ async def get_report(run_id: str, patient_name: str):
         wm_lesions = lesion_counts.get('Deep White Matter', 0)
         
         # Load DICOM file and extract metadata from the uploaded folder
-        dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, "DICOMS", patient_name)
+        dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, patient_name)
         
         try:
             dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) 
@@ -330,10 +331,12 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         )
         
 @app.post("/api/upload-dicoms")
-async def upload_dicoms(files: List[UploadFile] = File(...)):
+async def upload_dicoms(files: List[UploadFile] = File(...), run_id: str = None):
     try:
-        # Generate unique run ID
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Use provided run_id or generate new one
+        if not run_id:
+            run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
         base_dir = os.path.join(UPLOAD_FOLDER, run_id)
         
         # Create base directory
@@ -341,52 +344,39 @@ async def upload_dicoms(files: List[UploadFile] = File(...)):
         
         # Save all files maintaining their structure
         for file in files:
-            # Get the full path from the filename (includes patient/session/modality structure)
-            file_path = os.path.join(base_dir, file.filename)
+            filename = '/'.join(file.filename.split('/')[1:])
+            file_path = os.path.join(base_dir, filename)
             
-            # Create directories if they don't exist
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             
-            # Save the file
-            content = await file.read()
+            # Save file in chunks
+            CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
             with open(file_path, "wb") as buffer:
-                buffer.write(content)
+                while True:
+                    chunk = await file.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    buffer.write(chunk)
         
         # Get list of patient directories
-        patient_dirs = [d for d in os.listdir(base_dir) 
-                       if os.path.isdir(os.path.join(base_dir, d))]
-        
-        # Process each patient and their sessions
-        for patient_dir in patient_dirs:
-            patient_path = os.path.join(base_dir, patient_dir)
-            session_dirs = [d for d in os.listdir(patient_path)
-                          if os.path.isdir(os.path.join(patient_path, d))]
-            
-            # Process each session for this patient
-            for session_dir in session_dirs:
-                session_path = os.path.join(patient_path, session_dir)
-                flair_dir = os.path.join(session_path, "flair")
-                t1_dir = os.path.join(session_path, "t1")
-                
-                # Verify that both flair and t1 directories exist
-                if os.path.exists(flair_dir) and os.path.exists(t1_dir):
-                    # Create a unique ID for this patient-session combination
-                    session_id = f"{patient_dir}_{session_dir}"
+        patient_dirs = set()
+        for root, dirs, _ in os.walk(base_dir):
+            for d in dirs:
+                if os.path.exists(os.path.join(root, d)):
+                    patient_dirs.add(d)
+                    
 
         return JSONResponse(
             content={
-                "message": f"Files uploaded successfully. Processing started for {len(patient_dirs)} patients.",
+                "message": f"Files uploaded successfully. Batch processed.",
                 "run_id": run_id,
-                "patients": patient_dirs
+                "patients": list(patient_dirs)
             },
             status_code=200
         )
     except Exception as e:
         print(f"Error in upload: {str(e)}")
         traceback.print_exc()
-        # Clean up any partially created directories
-        if 'base_dir' in locals():
-            shutil.rmtree(base_dir, ignore_errors=True)
         return JSONResponse(
             content={"error": str(e)},
             status_code=500
@@ -402,17 +392,10 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
                 'error': f"Upload directory not found: {run_id}"
             }, status_code=404)
         
-        # Look for DICOMS directory first
-        dicoms_dir = os.path.join(base_dir, "DICOMS")
-        if not os.path.exists(dicoms_dir):
-            return JSONResponse({
-                'error': "DICOMS directory not found"
-            }, status_code=400)
         
         # Get patient directories inside DICOMS folder
-        patient_dirs = [item for item in os.listdir(dicoms_dir) 
-                       if item.startswith("4031-") and 
-                       os.path.isdir(os.path.join(dicoms_dir, item))]
+        patient_dirs = [item for item in os.listdir(base_dir) 
+                       if os.path.isdir(os.path.join(base_dir, item))]
         
         if not patient_dirs:
             return JSONResponse({
@@ -438,7 +421,7 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
         }
         
         # Add to background tasks
-        background_tasks.add_task(process_all_patients, run_id, dicoms_dir, patient_dirs)
+        background_tasks.add_task(process_all_patients, run_id, base_dir, patient_dirs)
         
         return JSONResponse({
             'message': f"Processing started for {len(patient_dirs)} patients",
@@ -467,54 +450,101 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 print(f"\n[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
                 
                 # Create thread pool for CPU-intensive tasks
-                with ThreadPoolExecutor(max_workers=1) as executor:
+                with ThreadPoolExecutor(max_workers=12) as executor:
                     # Process each step in the thread pool
                     patient_path = os.path.join(base_dir, patient_dir)
+                    # Get patient directories inside DICOMS folder
+                    session_dirs = [item for item in os.listdir(patient_path) 
+                                    if os.path.isdir(os.path.join(patient_path, item))]
                     patient_output_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_dir)
                     os.makedirs(patient_output_dir, exist_ok=True)
+                    
+                    for session in session_dirs:
+                        session_path = os.path.join(patient_path, session)
+                        session_output_dir = os.path.join(patient_output_dir, session)
+                        os.makedirs(session_output_dir, exist_ok=True)
+                        try:
+                           
+                            # Find FLAIR and T1 directories
+                            flair_dir, t1_dir = executor.submit(
+                                find_input_directories, session_path
+                            ).result()
+                            
+                            # Upload T1 and FLAIR DCM files to Orthanc
+                            upload_to_orthanc(flair_dir)
+                            upload_to_orthanc(t1_dir)
 
-                    # Find FLAIR and T1 directories
-                    flair_dir, t1_dir = executor.submit(
-                        find_input_directories, patient_path
-                    ).result()
+                            # Preprocessing step
+                            status['steps']['preprocessing'] = 'processing'
+                            msxplain = MSXplainReport(
+                                flair_dir=flair_dir,
+                                t1_dir=t1_dir,
+                                output_dir=session_output_dir
+                            )
+                            
+                            nifti_files = executor.submit(
+                                msxplain.convert_dicoms_to_nifti
+                            ).result()
+                            
+                            preprocessed_files = executor.submit(
+                                msxplain.preprocess_images, nifti_files
+                            ).result()
+                            
+                            status['steps']['preprocessing'] = 'completed'
 
-                    # Preprocessing step
-                    status['steps']['preprocessing'] = 'processing'
-                    msxplain = MSXplainReport(
-                        flair_dir=flair_dir,
-                        t1_dir=t1_dir,
-                        output_dir=patient_output_dir
-                    )
-                    
-                    nifti_files = executor.submit(
-                        msxplain.convert_dicoms_to_nifti
-                    ).result()
-                    
-                    preprocessed_files = executor.submit(
-                        msxplain.preprocess_images, nifti_files
-                    ).result()
-                    
-                    status['steps']['preprocessing'] = 'completed'
+                            # MSXplain step
+                            status['steps']['msxplain'] = 'processing'
+                            prediction_file = executor.submit(
+                                msxplain.run_msxplain, preprocessed_files
+                            ).result()
+                            
+                            status['steps']['msxplain'] = 'completed'
 
-                    # MSXplain step
-                    status['steps']['msxplain'] = 'processing'
-                    prediction_file = executor.submit(
-                        msxplain.run_msxplain, preprocessed_files
-                    ).result()
-                    
-                    status['steps']['msxplain'] = 'completed'
+                            # Report generation step
+                            status['steps']['report'] = 'processing'
+                            report_df = executor.submit(
+                                msxplain.generate_report, prediction_file
+                            ).result()
+                            
+                            labels_path = executor.submit(
+                                msxplain.compute_labels, report_df
+                            ).result()
+                            
+                            report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
+                            report_df.to_excel(report_path, index=False)
+                            
+                            # Register lesion_map to Flair original space
+                            lesion_map_flair_space = executor.submit(
+                                msxplain.register_lesion_map_to_flair
+                            ).result()
+                            
+                            status['steps']['report'] = 'completed'
+                            status['status'] = 'completed'
+                            
+                            lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
+                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space.nii.gz"))
+                            
+                            # Convert segmentation to DICOM-SEG
+                            print("Converting NIFTI label maps to DCM SEG...")
+                            dcmseg_flair = executor.submit(
+                                msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
+                            ).result()
+                            
+                            dcmseg_t1n = executor.submit(
+                                msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
+                            ).result()
+                            
+                            # Upload DCM SEG to Orthanc
+                            upload_to_orthanc(session_output_dir)
+                            
+                            # Convert segmentation to DICOM-SEG
+                            # seg_path = os.path.join(patient_output_dir, "segmentation.nii.gz")
+                            # dicom_dir = os.path.join(patient_path, "dicoms")
+                            # seg_output = os.path.join(patient_output_dir, "segmentation.dcm")
 
-                    # Report generation step
-                    status['steps']['report'] = 'processing'
-                    report_df = executor.submit(
-                        msxplain.generate_report, prediction_file
-                    ).result()
-                    
-                    report_path = os.path.join(patient_output_dir, f"report_{patient_dir}.xlsx")
-                    report_df.to_excel(report_path, index=False)
-                    
-                    status['steps']['report'] = 'completed'
-                    status['status'] = 'completed'
+                        except Exception as e:
+                            print(f"Error processing session {session} for patient {patient_dir}: {str(e)}")
+                            traceback.print_exc()
 
             except Exception as e:
                 print(f"Error processing patient {patient_dir}: {str(e)}")
@@ -548,6 +578,65 @@ def find_input_directories(patient_path):
         raise ValueError(f"Could not find FLAIR and T1 directories in {patient_path}")
         
     return flair_dir, t1_dir
+
+# def convert_segmentation_to_dicomseg(nifti_path, dicom_dir, output_path):
+#     """Convert NIfTI segmentation to DICOM-SEG"""
+#     # Create metadata for the DICOM-SEG
+#     metadata = {
+#         "ContentCreatorName": "MSXplain",
+#         "SeriesDescription": "MS Lesion Segmentation",
+#         "SegmentAlgorithmName": "MSXplain v1.0",
+#         "SegmentationCategoryCodeSequence": {
+#             "CodeValue": "125001",
+#             "CodingSchemeDesignator": "DCM",
+#             "CodeMeaning": "Tissue"
+#         }
+#     }
+    
+#     # Write metadata to temp file
+#     with tempfile.NamedTemporaryFile(suffix='.json', mode='w') as f:
+#         json.dump(metadata, f)
+#         f.flush()
+        
+#         # Convert NIfTI to DICOM-SEG
+#         nifti_to_dicomseg(
+#             nifti_path,
+#             dicom_dir,
+#             f.name,
+#             output_path
+#         )
+        
+# def convert_segmentation_to_dicom(self):
+#         nifti_seg_file = 
+
+#         output_paths = []
+
+#         for dicom_path in self.dicom_paths:
+#             sitk_image = SimpleITK.ReadImage(nifti_seg_file)
+#             dicom_paths_groups = re.match(dicom_path_regex, dicom_path).groupdict()
+#             output_directory = f"{self.output_path_dicomseg}"
+#             os.makedirs(output_directory, exist_ok=True)
+#             output_path = (
+#                 f"{output_directory}/{dicom_paths_groups['series_type']}-seg.dcm"
+#             )
+
+#             dicom_path_with_files = self.get_directory_with_files(dicom_path)
+#             print("Generating DICOM SEG for " + dicom_path)
+#             nifti_to_seg(
+#                 sitk_image,
+#                 dicom_path_with_files,
+#                 output_path,
+#                 roi_dict,
+#                 series_description=f"{dicom_paths_groups['series_type']} - Segmentation",
+#                 match_orientation_flag=True,
+#                 match_size_flag=True,
+#                 skip_empty_slices=True,
+#                 fractional=self.is_fractional,
+#             )
+
+#             output_paths.append(output_path)
+
+#         self.output_dicom_files = output_paths
 
 @app.get("/api/process-status/{run_id}")
 async def get_process_status(run_id: str):
@@ -628,18 +717,38 @@ async def get_processed_runs():
                 patients = []
                 for patient_dir in all_patients:
                     patient_path = os.path.join(run_dir, patient_dir)
-                    report_path = os.path.join(patient_path, f"report_{patient_dir}.xlsx")
+
+                    # Get all sessions for this patient
+                    sessions = [
+                        session for session in os.listdir(patient_path)
+                        if os.path.isdir(os.path.join(patient_path, session))
+                    ]
                     
-                    # Check if patient is in processing status
-                    run_status = processing_status.get(run_id, {}).get('patients', {}).get(patient_dir, {})
-                    if run_status and any(step == 'processing' for step in run_status.get('steps', {}).values()):
-                        status = "Processing"
-                    else:
-                        status = "Complete" if os.path.exists(report_path) else "Processing"
+                    # Check status for each session
+                    session_statuses = []
+                    for session in sessions:
+                        session_path = os.path.join(patient_path, session)
+                        report_path = os.path.join(session_path, f"report_{patient_dir}_{session}.xlsx")
+                        
+                        # Check if session is in processing status
+                        run_status = processing_status.get(run_id, {}).get('patients', {}).get(patient_dir, {})
+                        if run_status and any(step == 'processing' for step in run_status.get('steps', {}).values()):
+                            status = "Processing"
+                        else:
+                            status = "Complete" if os.path.exists(report_path) else "Processing"
+                        
+                        session_statuses.append({
+                            "date": session,
+                            "status": status,
+                            "report": os.path.exists(report_path)
+                        })
                     
+                    # Add patient with all their sessions
                     patients.append({
                         "id": patient_dir,
-                        "status": status
+                        "sessions": session_statuses,
+                        # Consider patient complete if all sessions are complete
+                        "status": "Complete" if all(s["status"] == "Complete" for s in session_statuses) else "Processing"
                     })
                 
                 # Get total patients from processing status or fallback to directory count
@@ -650,7 +759,8 @@ async def get_processed_runs():
                     "id": run_id,
                     "date": datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S'),
                     "patients": patients,
-                    "total_patients": total_patients
+                    "total_patients": total_patients,
+                    "total_sessions": sum(len(p["sessions"]) for p in patients)
                 })
         
         # Sort runs by date, most recent first
@@ -664,6 +774,20 @@ async def get_processed_runs():
             content={"error": str(e)},
             status_code=500
         )
+
+# @app.post("/api/update-ohif-studies")
+# async def update_ohif_studies():
+#     try:
+#         from create_study_list import create_ohif_study_list
+        
+#         create_ohif_study_list(
+#             PROCESSED_FOLDER,
+#             os.path.join(os.path.dirname(__file__), "studies.json")
+#         )
+        
+#         return {"message": "OHIF study list updated successfully"}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 def main():
     """Run the FastAPI application"""

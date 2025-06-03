@@ -13,10 +13,9 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
     """
 
     try:
-        print("Starting SAMSEG processing...")
         samseg_dir = os.path.join(patient_dir, "SAMSEG")
         
-        # 1. Run SAMSEG
+        # Run SAMSEG
         print("Running SAMSEG segmentation...")
         subprocess.run([
             "run_samseg",
@@ -27,17 +26,16 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 2. Convert MGZ to NIFTI
-        print("Converting MGZ to NIFTI...")
+        # Convert MGZ to NIFTI
         subprocess.run([
             "mri_convert",
             os.path.join(samseg_dir, "seg.mgz"),
             os.path.join(samseg_dir, "seg.nii.gz")
-        ], 
+        ],
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 3. Create individual structure masks
+        # Create individual structure masks
         print("Creating structure masks...")
         structures = {
             "LeftWM": (1.5, 2.5),
@@ -65,7 +63,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                            stdout=subprocess.DEVNULL,
                            check=True)
         
-        # 4. Create WM mask
+        # Create WM mask
         print("Creating WM mask...")
         subprocess.run([
             "fslmaths",
@@ -85,7 +83,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 5. Create Cortex mask
+        # Create Cortex mask
         print("Creating Cortex mask...")
         subprocess.run([
             "fslmaths",
@@ -123,7 +121,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 6. Create Ventricles mask
+        # Create Ventricles mask
         print("Creating Ventricles mask...")
         subprocess.run([
             "fslmaths",
@@ -161,7 +159,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 7. Create Infratentorial mask
+        # Create Infratentorial mask
         print("Creating Infratentorial mask...")
         subprocess.run([
             "fslmaths",
@@ -183,12 +181,9 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        stdout=subprocess.DEVNULL,
                        check=True)
         
-        # 8. Clean up temporary files
-        print("Cleaning up temporary files...")
+        # Clean up temporary files
         os.remove(os.path.join(samseg_dir, "common.nii.gz"))
         os.remove(os.path.join(samseg_dir, "common2.nii.gz"))
-        
-        print("SAMSEG processing completed successfully")
         
     except subprocess.CalledProcessError as e:
         print(f"Error in SAMSEG processing: {str(e)}")
