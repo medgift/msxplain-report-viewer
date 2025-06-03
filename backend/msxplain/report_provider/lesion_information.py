@@ -15,7 +15,7 @@ import pandas as pd
 from scipy import ndimage
 from pathlib import Path
 import scipy.ndimage as ndimage
-from msxplain.lesion_extraction import get_lesion_types_masks
+from .lesion_extraction import get_lesion_types_masks
 import traceback
 
 

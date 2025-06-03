@@ -6,8 +6,6 @@ import os
 from glob import glob
 import re
 import logging
-from msxplain.transforms import binarize_mask
-
 
 def check_dataset(filepaths_list, prefixes):
     """Check that there are equal amounts of files in both lists and

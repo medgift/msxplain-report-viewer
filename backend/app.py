@@ -14,6 +14,7 @@ from PIL import Image
 import pydicom
 from typing import List, Dict
 from msxplain.msxplain_report import MSXplainReport
+from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
 from fastapi.background import BackgroundTasks
 from concurrent.futures import ThreadPoolExecutor
 
@@ -363,6 +364,7 @@ async def upload_dicoms(files: List[UploadFile] = File(...), run_id: str = None)
             for d in dirs:
                 if os.path.exists(os.path.join(root, d)):
                     patient_dirs.add(d)
+                    
 
         return JSONResponse(
             content={
@@ -467,6 +469,10 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             flair_dir, t1_dir = executor.submit(
                                 find_input_directories, session_path
                             ).result()
+                            
+                            # Upload T1 and FLAIR DCM files to Orthanc
+                            upload_to_orthanc(flair_dir)
+                            upload_to_orthanc(t1_dir)
 
                             # Preprocessing step
                             status['steps']['preprocessing'] = 'processing'
@@ -528,7 +534,8 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             
-                            
+                            # Upload DCM SEG to Orthanc
+                            upload_to_orthanc(session_output_dir)
                             
                             # Convert segmentation to DICOM-SEG
                             # seg_path = os.path.join(patient_output_dir, "segmentation.nii.gz")
