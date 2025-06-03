@@ -9,11 +9,12 @@ import pydicom
 import SimpleITK as sitk
 import torch
 import pandas as pd
-from .predict import predict_msxplain
-from .samseg_processing import run_samseg_processing
-from .lesion_information import generate_lesion_report
+from .report_provider.predict import predict_msxplain
+from .report_provider.samseg_processing import run_samseg_processing
+from .report_provider.lesion_information import generate_lesion_report
 from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
+
 
 def load_config():
     config_path = Path(__file__).parent.parent / 'config.yml'
@@ -45,7 +46,7 @@ class MSXplainReport:
             flair_dir (str): Directory containing FLAIR DICOM series
             t1_dir (str): Directory containing T1 DICOM series
             output_dir (str): Directory where to save results
-"""
+        """
         self.flair_dir = flair_dir
         self.t1_dir = t1_dir
         

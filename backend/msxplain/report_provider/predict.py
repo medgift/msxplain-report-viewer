@@ -3,9 +3,9 @@ from monai.data import DataLoader
 from monai.inferers import SlidingWindowInferer
 from monai.networks.nets import UNet
 from monai.networks.nets import UNet
-from msxplain.datasets import NiftinotargetDataset
-from msxplain.transforms import get_valnotarget_transforms
-from msxplain.losses import *
+from .datasets import NiftinotargetDataset
+from .transforms import get_valnotarget_transforms
+from .losses import *
 import numpy as np
 import nibabel as nib
 from pathlib import Path
