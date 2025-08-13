@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # Your Backend Service (Development)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: medical_backend_dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/medical_db
+      - ORTHANC_URL=http://orthanc:8042
+      - REDIS_URL=redis://redis:6379
+      - ENV=development
+      - FLASK_DEBUG=1  # or DJANGO_DEBUG=1 depending on your framework
+    volumes:
+      - ./backend:/app  # Mount source code for hot reloading
+      - backend_data:/app/data
+    depends_on:
+      - db
+      - redis
+      - orthanc
+    networks:
+      - medical_network
+    restart: unless-stopped
+
+  # Database
+  db:
+    image: postgres:15-alpine
+    container_name: medical_db_dev
+    ports:
+      - "5432:5432"  # Expose for local DB tools
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=medical_db
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    networks:
+      - medical_network
+    restart: unless-stopped
+
+  # Redis (for caching/sessions)
+  redis:
+    image: redis:7-alpine
+    container_name: medical_redis_dev
+    ports:
+      - "6379:6379"  # Expose for Redis CLI access
+    volumes:
+      - redis_data_dev:/data
+    networks:
+      - medical_network
+    restart: unless-stopped
+
+  # Orthanc DICOM Server
+  orthanc:
+    image: jodogne/orthanc-plugins:1.12.1
+    container_name: medical_orthanc_dev
+    ports:
+      - "4242:4242"  # DICOM port
+      - "8042:8042"  # Web interface
+    volumes:
+      - orthanc_data_dev:/var/lib/orthanc/db
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+    networks:
+      - medical_network
+    restart: unless-stopped
+
+  # OHIF Viewer
+  ohif:
+    image: ohif/app:v3.7.0
+    container_name: medical_ohif_dev
+    ports:
+      - "3001:80"
+    environment:
+      - APP_CONFIG=/usr/share/nginx/html/app-config.js
+    volumes:
+      - ./ohif/app-config-dev.js:/usr/share/nginx/html/app-config.js:ro
+    depends_on:
+      - orthanc
+    networks:
+      - medical_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+  orthanc_data_dev:
+  backend_data:
+
+networks:
+  medical_network:
+    driver: bridge
