@@ -1,0 +1,29 @@
+# Root .dockerignore
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+.env
+.nyc_output
+coverage
+.dockerignore
+Dockerfile*
+docker-compose*
+
+# Backend specific
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache
+.venv
+.env
+*.egg-info
