@@ -1,29 +1,40 @@
-# Root .dockerignore
-node_modules
-npm-debug.log
-.git
-.gitignore
-README.md
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
 .env
-.nyc_output
-coverage
-.dockerignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+README.md
+
+# Test files
+*_test.py
+test_*.py
+tests/
+
+# Temporary files
+*.tmp
+*.log
+
+# Docker files
 Dockerfile*
 docker-compose*
 
-# Backend specific
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
-env
-pip-log.txt
-pip-delete-this-directory.txt
-.tox
-.coverage
-.coverage.*
-.pytest_cache
-.venv
-.env
-*.egg-info
+# OS files
+.DS_Store
+Thumbs.db
