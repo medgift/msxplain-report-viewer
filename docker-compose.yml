@@ -1,86 +1,76 @@
-version: '3.8'
+# Docker compose file for MSXplain application
 
 services:
-  # Backend service
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: msxplain-backend
-    ports:
-      - "8000:8000"
+  msxplain_backend:
+    build: ./backend
+    container_name: msxplain_backend
     volumes:
+      # Persist data
       - ./backend/files:/app/files
-      - ./backend/config.yml:/app/config.yml:ro
-      # Mount FreeSurfer license if you have one
-      # - ./freesurfer_license.txt:/opt/freesurfer/license.txt:ro
-    environment:
-      - PYTHONPATH=/app
-      - ORTHANC_URL=http://orthanc:8042
-      - FSLDIR=/usr/share/fsl/6.0
-      - FSLOUTPUTTYPE=NIFTI_GZ
-      - FREESURFER_HOME=/usr/local/freesurfer
-      - ANTSPATH=/opt/ants
+    ports:
+      - "5000:5000"
+    # depends_on:
+    #   - db
+    restart: unless-stopped
     networks:
       - msxplain-network
-    depends_on:
-      - orthanc
-    restart: unless-stopped
-    # Uncomment the following lines if you have a GPU and want to use it
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
 
-  # Frontend service
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: msxplain-frontend
-    ports:
-      - "3001:80"
-    networks:
-      - msxplain-network
-    depends_on:
-      - backend
-    restart: unless-stopped
+  # msxplain_frontend:
+  #   build: ./frontend
+  #   container_name: msxplain_frontend
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+  #   networks:
+  #     - msxplain-network  
 
-  # Orthanc PACS server
-  orthanc:
-    container_name: orthanc
-    image: jodogne/orthanc-plugins:1.12.6
-    ports:
-      - "8042:8042"
-      - "4242:4242"
-    volumes:
-      - ./ohif-orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
-      - ./ohif-orthanc/orthanc_db:/var/lib/orthanc/db
-    networks:
-      - msxplain-network
-    restart: unless-stopped
-
-  # OHIF Viewer
   ohif_viewer:
-    container_name: ohif
-    image: ohif-viewer
-    ports:
-      - "3000:80"
+    image: lluisb3/ohif-webapp:latest
+    container_name: msxplain_ohif_viewer
     volumes:
-      - ./ohif-orthanc/app-config.js:/usr/share/nginx/html/app-config.js:ro
+      # Nginx config
+      - ./config_ohif_orthnac/config/nginx.conf:/etc/nginx/nginx.conf
+      # Logs
+      - ./config_ohif_orthnac/logs/nginx:/var/logs/nginx
+      # Let's Encrypt
+      # - letsencrypt_certificates:/etc/letsencrypt
+      # - letsencrypt_challenges:/var/www/letsencrypt
+    ports:
+      - '443:443' # SSL
+      - '80:80' # Web
+    depends_on:
+      #   - keycloak
+      - orthanc
+    restart: on-failure
     networks:
       - msxplain-network
-    depends_on:
-      - orthanc
+
+  orthanc:
+    image: jodogne/orthanc-plugins:1.12.9
+    container_name: msxplain_orthancPACS
+    hostname: orthanc
+    volumes:
+      # Config
+      - ./config_ohif_orthnac/config/orthanc.json:/etc/orthanc/orthanc.json:ro
+      # Persist data
+      - ./config_ohif_orthnac/volumes/orthanc-db/:/var/lib/orthanc/db/
+    ports:
+      - '4242:4242' # Orthanc REST API
+      - '8042:8042' # Orthanc HTTP
     restart: unless-stopped
+    networks:
+      - msxplain-network
 
 networks:
   msxplain-network:
     driver: bridge
 
-volumes:
-  orthanc_db:
-  processed_files:

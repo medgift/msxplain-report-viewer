@@ -27,7 +27,8 @@ def find_dicom_files(base_folder: str) -> list:
 
 def upload_to_orthanc(base_folder: str) -> None:
     """Upload DICOM files to Orthanc"""
-    orthanc_url = "http://127.0.0.1:8042"
+    # Use Docker service name instead of localhost for container networking
+    orthanc_url = "http://orthanc:8042"
     
     # First check if Orthanc is running
     try:

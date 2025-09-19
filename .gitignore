@@ -2,6 +2,8 @@
 ohif-orthanc
 Rerport_template_USB.pdf
 trash
+config_ohif_orthnac/logs/*
+config_ohif_orthnac/volumes/*
 
 ## Python ##
 # Byte-compiled / optimized / DLL files
