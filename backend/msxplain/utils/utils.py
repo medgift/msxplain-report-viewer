@@ -4,7 +4,8 @@ def transform_registration_params(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
         for line in lines:
-            if 'TransformParameters' in line:
+            # Look specifically for the line that starts with (TransformParameters
+            if line.strip().startswith('(TransformParameters '):
                 params = [float(x) for x in line.split('(TransformParameters ')[1].strip(')\n').split()]
                 rotation_angles = params[0:3]
                 translation = params[3:6]

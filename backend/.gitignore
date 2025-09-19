@@ -1,5 +1,7 @@
 ## Backend ##
-files/
-msxplain/model/
+files/*
+msxplain/model/*
 config.yml
-msxplain/seglib/tests/
+secrets/*
+hd_bet_models/*
+
