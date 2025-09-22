@@ -536,11 +536,6 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             
                             # Upload DCM SEG to Orthanc
                             upload_to_orthanc(session_output_dir)
-                            
-                            # Convert segmentation to DICOM-SEG
-                            # seg_path = os.path.join(patient_output_dir, "segmentation.nii.gz")
-                            # dicom_dir = os.path.join(patient_path, "dicoms")
-                            # seg_output = os.path.join(patient_output_dir, "segmentation.dcm")
 
                         except Exception as e:
                             print(f"Error processing session {session} for patient {patient_dir}: {str(e)}")
@@ -579,64 +574,6 @@ def find_input_directories(patient_path):
         
     return flair_dir, t1_dir
 
-# def convert_segmentation_to_dicomseg(nifti_path, dicom_dir, output_path):
-#     """Convert NIfTI segmentation to DICOM-SEG"""
-#     # Create metadata for the DICOM-SEG
-#     metadata = {
-#         "ContentCreatorName": "MSXplain",
-#         "SeriesDescription": "MS Lesion Segmentation",
-#         "SegmentAlgorithmName": "MSXplain v1.0",
-#         "SegmentationCategoryCodeSequence": {
-#             "CodeValue": "125001",
-#             "CodingSchemeDesignator": "DCM",
-#             "CodeMeaning": "Tissue"
-#         }
-#     }
-    
-#     # Write metadata to temp file
-#     with tempfile.NamedTemporaryFile(suffix='.json', mode='w') as f:
-#         json.dump(metadata, f)
-#         f.flush()
-        
-#         # Convert NIfTI to DICOM-SEG
-#         nifti_to_dicomseg(
-#             nifti_path,
-#             dicom_dir,
-#             f.name,
-#             output_path
-#         )
-        
-# def convert_segmentation_to_dicom(self):
-#         nifti_seg_file = 
-
-#         output_paths = []
-
-#         for dicom_path in self.dicom_paths:
-#             sitk_image = SimpleITK.ReadImage(nifti_seg_file)
-#             dicom_paths_groups = re.match(dicom_path_regex, dicom_path).groupdict()
-#             output_directory = f"{self.output_path_dicomseg}"
-#             os.makedirs(output_directory, exist_ok=True)
-#             output_path = (
-#                 f"{output_directory}/{dicom_paths_groups['series_type']}-seg.dcm"
-#             )
-
-#             dicom_path_with_files = self.get_directory_with_files(dicom_path)
-#             print("Generating DICOM SEG for " + dicom_path)
-#             nifti_to_seg(
-#                 sitk_image,
-#                 dicom_path_with_files,
-#                 output_path,
-#                 roi_dict,
-#                 series_description=f"{dicom_paths_groups['series_type']} - Segmentation",
-#                 match_orientation_flag=True,
-#                 match_size_flag=True,
-#                 skip_empty_slices=True,
-#                 fractional=self.is_fractional,
-#             )
-
-#             output_paths.append(output_path)
-
-#         self.output_dicom_files = output_paths
 
 @app.get("/api/process-status/{run_id}")
 async def get_process_status(run_id: str):
@@ -775,23 +712,10 @@ async def get_processed_runs():
             status_code=500
         )
 
-# @app.post("/api/update-ohif-studies")
-# async def update_ohif_studies():
-#     try:
-#         from create_study_list import create_ohif_study_list
-        
-#         create_ohif_study_list(
-#             PROCESSED_FOLDER,
-#             os.path.join(os.path.dirname(__file__), "studies.json")
-#         )
-        
-#         return {"message": "OHIF study list updated successfully"}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
 def main():
     """Run the FastAPI application"""
     uvicorn.run(app, host="0.0.0.0", port=5000)
+
 
 if __name__ == "__main__":
     main()
