@@ -12,6 +12,7 @@ import numpy as np
 from io import BytesIO
 from PIL import Image
 import pydicom
+import requests
 from typing import List, Dict
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
@@ -124,6 +125,44 @@ async def get_report(run_id: str, patient_name: str, session: str):
             print(f"Error reading DICOM metadata: {str(e)}")
             patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
 
+        # Get StudyInstanceUID from Orthanc for this patient
+        study_instance_uid = None
+        try:
+            # Query Orthanc for studies by patient ID using the tools/find API
+            orthanc_url = "http://orthanc:8042"
+            
+            # Use Orthanc's tools/find API to search for studies by PatientID
+            search_payload = {
+                "Level": "Study",
+                "Query": {
+                    "PatientID": patient_id
+                },
+                "Expand": True
+            }
+            
+            search_response = requests.post(
+                f"{orthanc_url}/tools/find",
+                json=search_payload
+            )
+            
+            if search_response.status_code == 200:
+                studies = search_response.json()
+                print(f"Found {len(studies)} studies for patient {patient_id}")
+                if studies:
+                    # Get the StudyInstanceUID from the first study
+                    # The response is a list of study resources with full details
+                    first_study = studies[0]
+                    study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
+                    print(f"StudyInstanceUID: {study_instance_uid}")
+                else:
+                    print(f"No studies found for patient {patient_id}")
+            else:
+                print(f"Failed to query Orthanc: {search_response.status_code}")
+        except Exception as e:
+            print(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
         # Check if McDonald Criteria is fulfilled
         lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
         affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
@@ -148,7 +187,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_name": patient_name if patient_name else "Unknown",
             "patient_id": patient_id if patient_id else "Unknown",
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
-            "patient_sex": patient_sex if patient_sex else "Unknown"
+            "patient_sex": patient_sex if patient_sex else "Unknown",
+            "study_instance_uid": study_instance_uid if study_instance_uid else None
         }
         return report_data
     except Exception as e:

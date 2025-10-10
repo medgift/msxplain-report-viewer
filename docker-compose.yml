@@ -28,31 +28,31 @@ services:
   #   ports:
   #     - "3000:3000"
   #   depends_on:
-  #     - backend
+  #     - msxplain_backend
   #   restart: unless-stopped
   #   networks:
   #     - msxplain-network  
 
-  ohif_viewer:
-    image: lluisb3/ohif-webapp:latest
-    container_name: msxplain_ohif_viewer
-    volumes:
-      # Nginx config
-      - ./config_ohif_orthnac/config/nginx.conf:/etc/nginx/nginx.conf
-      # Logs
-      - ./config_ohif_orthnac/logs/nginx:/var/logs/nginx
-      # Let's Encrypt
-      # - letsencrypt_certificates:/etc/letsencrypt
-      # - letsencrypt_challenges:/var/www/letsencrypt
-    ports:
-      - '443:443' # SSL
-      - '80:80' # Web
-    depends_on:
-      #   - keycloak
-      - orthanc
-    restart: on-failure
-    networks:
-      - msxplain-network
+  # ohif_viewer:
+  #   image: lluisb3/ohif-webapp:latest
+  #   container_name: msxplain_ohif_viewer
+  #   volumes:
+  #     # Nginx config
+  #     - ./config_ohif_orthnac/config/nginx.conf:/etc/nginx/nginx.conf
+  #     # Logs
+  #     - ./config_ohif_orthnac/logs/nginx:/var/logs/nginx
+  #     # Let's Encrypt
+  #     # - letsencrypt_certificates:/etc/letsencrypt
+  #     # - letsencrypt_challenges:/var/www/letsencrypt
+  #   ports:
+  #     - '443:443' # SSL
+  #     - '80:80' # Web
+  #   depends_on:
+  #     #   - keycloak
+  #     - orthanc
+  #   restart: on-failure
+  #   networks:
+  #     - msxplain-network
 
   orthanc:
     image: jodogne/orthanc-plugins:1.12.9
