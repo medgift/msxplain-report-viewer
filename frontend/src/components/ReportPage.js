@@ -45,14 +45,16 @@ const ReportPage = () => {
   const openOHIFViewer = () => {
     // Check if we have the StudyInstanceUID from the report data
     if (reportData && reportData.study_instance_uid) {
-      // Use the server's IP or hostname instead of localhost
-      const OHIF_URL = 'http://10.130.2.34:8042/ohif/';
+      // Use the current hostname (works on localhost, server IP, or domain)
+      const hostname = window.location.hostname;
+      const OHIF_URL = `http://${hostname}:8042/ohif/`;
       const viewerUrl = `${OHIF_URL}viewer?StudyInstanceUIDs=${reportData.study_instance_uid}`;
       // Open in new tab with security attributes
       window.open(viewerUrl, '_blank', 'noopener,noreferrer');
     } else {
       // Fallback to OHIF home page if no StudyInstanceUID is available
-      const OHIF_URL = 'http://10.130.2.34:8042/ohif/';
+      const hostname = window.location.hostname;
+      const OHIF_URL = `http://${hostname}:8042/ohif/`;
       window.open(OHIF_URL, '_blank', 'noopener,noreferrer');
       console.warn('No StudyInstanceUID available, opening OHIF home page');
     }
