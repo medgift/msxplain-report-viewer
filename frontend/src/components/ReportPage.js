@@ -25,6 +25,8 @@ const ReportPage = () => {
           if (data.error) {
             setError(data.error); // Handle error from backend
           } else {
+            console.log('Report data received:', data);
+            console.log('StudyInstanceUID:', data.study_instance_uid);
             setReportData(data); // Set the summary data
           }
           setLoading(false); // Set loading to false after data is fetched
@@ -41,11 +43,19 @@ const ReportPage = () => {
   };
 
   const openOHIFViewer = () => {
-    // Hardcode the OHIF URL since we know it's running on port 3000
-    const OHIF_URL = 'http://127.0.0.1/';    // Construct the full URL with study parameters
-    const viewerUrl = `${OHIF_URL}`;
-    // Open in new tab with security attributes
-    window.open(viewerUrl, '_blank', 'noopener,noreferrer');
+    // Check if we have the StudyInstanceUID from the report data
+    if (reportData && reportData.study_instance_uid) {
+      // Use the server's IP or hostname instead of localhost
+      const OHIF_URL = 'http://10.130.2.34:8042/ohif/';
+      const viewerUrl = `${OHIF_URL}viewer?StudyInstanceUIDs=${reportData.study_instance_uid}`;
+      // Open in new tab with security attributes
+      window.open(viewerUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      // Fallback to OHIF home page if no StudyInstanceUID is available
+      const OHIF_URL = 'http://10.130.2.34:8042/ohif/';
+      window.open(OHIF_URL, '_blank', 'noopener,noreferrer');
+      console.warn('No StudyInstanceUID available, opening OHIF home page');
+    }
   };
 
   const handleLoadReport = () => {
