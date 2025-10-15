@@ -1,5 +1,4 @@
 # Docker compose file for MSXplain application
-
 services:
   msxplain_backend:
     build: ./backend
@@ -22,16 +21,16 @@ services:
               count: all
               capabilities: [gpu]
 
-  # msxplain_frontend:
-  #   build: ./frontend
-  #   container_name: msxplain_frontend
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - msxplain_backend
-  #   restart: unless-stopped
-  #   networks:
-  #     - msxplain-network  
+  msxplain_frontend:
+    build: ./frontend
+    container_name: msxplain_frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - msxplain_backend
+    restart: unless-stopped
+    networks:
+      - msxplain-network  
 
   # ohif_viewer:
   #   image: lluisb3/ohif-webapp:latest
