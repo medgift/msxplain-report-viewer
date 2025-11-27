@@ -41,6 +41,10 @@ COPY requirements.txt .
 # Install Python dependencies BEFORE installing FSL to avoid conflicts
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set HD-BET to use a folder in /app instead of $HOME
+ENV HOME=/app
+ENV HDBET_PARAMS_FOLDER=/app/hd_bet_params
+
 # Copy pre-downloaded HD-BET models and set them up
 COPY hd_bet_models/ /tmp/hd_bet_models/
 RUN python -c "\
@@ -129,6 +133,15 @@ RUN mkdir -p files/uploads files/processed files/DICOMS files/important_atlas
 
 # Set up FreeSurfer license
 COPY secrets/license.txt ${FREESURFER_HOME}/license.txt
+
+# Create a non-root user to run the application
+RUN groupadd -r msxplain && useradd -r -g msxplain -u 1000 msxplain
+
+# Change ownership of app directory and files to non-root user
+RUN chown -R msxplain:msxplain /app
+
+# Switch to non-root user
+USER msxplain
 
 # Expose port
 EXPOSE 5000

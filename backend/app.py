@@ -554,15 +554,19 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             report_df.to_excel(report_path, index=False)
                             
                             # Register lesion_map to Flair original space
-                            lesion_map_flair_space = executor.submit(
-                                msxplain.register_lesion_map_to_flair
+                            # lesion_map_flair_space = executor.submit(
+                            #     msxplain.register_lesion_map_to_flair
+                            # ).result()
+                            
+                            lesion_map_flair_space_ants = executor.submit(
+                                msxplain.register_lesion_map_to_flair_ants
                             ).result()
                             
                             status['steps']['report'] = 'completed'
                             status['status'] = 'completed'
                             
                             lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
-                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space.nii.gz"))
+                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
                             # Convert segmentation to DICOM-SEG
                             print("Converting NIFTI label maps to DCM SEG...")
@@ -574,7 +578,9 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             
-                            # Upload DCM SEG to Orthanc
+                            # Upload MPRAGE, FLAIR and lesion map outputs(DCM SEG) to Orthanc
+                            upload_to_orthanc(flair_dir)
+                            upload_to_orthanc(t1_dir)
                             upload_to_orthanc(session_output_dir)
 
                         except Exception as e:
