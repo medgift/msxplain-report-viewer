@@ -2,7 +2,9 @@
 services:
   msxplain_backend:
     build: ./backend
+    image: msxplain_backend:dev
     container_name: msxplain_backend
+    user: "1000:1000"  # Run as non-root user (matches Dockerfile user)
     volumes:
       # Persist data
       - ./backend/files:/app/files
