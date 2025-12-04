@@ -16,66 +16,66 @@ from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
 
 
-def load_config():
-    config_path = Path(__file__).parent.parent / 'config.yml'
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+# def load_config():
+#     config_path = Path(__file__).parent.parent / 'config.yml'
+#     with open(config_path, 'r') as f:
+#         return yaml.safe_load(f)
 
-# Load configuration
-config = load_config()
+# # Load configuration
+# config = load_config()
 
-# Set FSLDIR and FREESURFER and ANTs PATH
-# Use environment variables if available (for Docker), otherwise use config
-fsl_dir = os.environ.get("FSLDIR", config['paths']['fsl_dir'])
-# For Docker, check if FSL is in the expected Docker locations
-if os.path.exists("/usr/share/fsl/6.0/bin/fslorient"):
-    fsl_dir = "/usr/share/fsl/6.0"
-elif os.path.exists("/usr/share/fsl/bin/fslorient"):
-    fsl_dir = "/usr/share/fsl"
-os.environ["FSLDIR"] = fsl_dir
-os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
-os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
-print(f"FSL configured: FSLDIR={fsl_dir}")
-print(f"PATH includes: {os.environ['PATH']}")
+# # Set FSLDIR and FREESURFER and ANTs PATH
+# # Use environment variables if available (for Docker), otherwise use config
+# fsl_dir = os.environ.get("FSLDIR", config['paths']['fsl_dir'])
+# # For Docker, check if FSL is in the expected Docker locations
+# if os.path.exists("/usr/share/fsl/6.0/bin/fslorient"):
+#     fsl_dir = "/usr/share/fsl/6.0"
+# elif os.path.exists("/usr/share/fsl/bin/fslorient"):
+#     fsl_dir = "/usr/share/fsl"
+# os.environ["FSLDIR"] = fsl_dir
+# os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
+# os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
+# print(f"FSL configured: FSLDIR={fsl_dir}")
+# print(f"PATH includes: {os.environ['PATH']}")
 
 # Debug: Check if fslorient is actually available
-import subprocess
-try:
-    result = subprocess.run(['which', 'fslorient'], capture_output=True, text=True, env=os.environ.copy())
-    if result.returncode == 0:
-        print(f"fslorient found at: {result.stdout.strip()}")
-    else:
-        print("fslorient not found in PATH")
-        # Let's check common locations
-        potential_paths = [
-            "/usr/share/fsl/6.0/bin/fslorient",
-            "/usr/share/fsl/bin/fslorient",
-            "/usr/share/fsl/share/fsl/bin/fslorient"
-        ]
-        for path in potential_paths:
-            if os.path.exists(path):
-                print(f"Found fslorient at: {path}")
-except Exception as e:
-    print(f"Error checking fslorient: {e}")
+# import subprocess
+# try:
+#     result = subprocess.run(['which', 'fslorient'], capture_output=True, text=True, env=os.environ.copy())
+#     if result.returncode == 0:
+#         print(f"fslorient found at: {result.stdout.strip()}")
+#     else:
+#         print("fslorient not found in PATH")
+#         # Let's check common locations
+#         potential_paths = [
+#             "/usr/share/fsl/6.0/bin/fslorient",
+#             "/usr/share/fsl/bin/fslorient",
+#             "/usr/share/fsl/share/fsl/bin/fslorient"
+#         ]
+#         for path in potential_paths:
+#             if os.path.exists(path):
+#                 print(f"Found fslorient at: {path}")
+# except Exception as e:
+#     print(f"Error checking fslorient: {e}")
 
-freesurfer_home = os.environ.get("FREESURFER_HOME", config['paths']['freesurfer_home'])
-os.environ["FREESURFER_HOME"] = freesurfer_home
-os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
-print(f"FreeSurfer configured: FREESURFER_HOME={freesurfer_home}")
+# freesurfer_home = os.environ.get("FREESURFER_HOME", config['paths']['freesurfer_home'])
+# os.environ["FREESURFER_HOME"] = freesurfer_home
+# os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
+# print(f"FreeSurfer configured: FREESURFER_HOME={freesurfer_home}")
 
-ants_path = os.environ.get("ANTSPATH", config['paths']['ants_dir'])
-# Handle both cases where ants_dir might include /install or not
-if not ants_path.endswith('/install') and not ants_path.endswith('/bin'):
-    if os.path.exists(os.path.join(ants_path, 'install')):
-        ants_dir = os.path.join(ants_path, "install")
-    else:
-        ants_dir = ants_path
-else:
-    ants_dir = ants_path
-os.environ["ANTsDIR"] = ants_dir
-os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
-print(f"ANTs configured: ANTsDIR={ants_dir}")
-print(f"PATH includes: {os.environ['PATH']}")
+# ants_path = os.environ.get("ANTSPATH", config['paths']['ants_dir'])
+# # Handle both cases where ants_dir might include /install or not
+# if not ants_path.endswith('/install') and not ants_path.endswith('/bin'):
+#     if os.path.exists(os.path.join(ants_path, 'install')):
+#         ants_dir = os.path.join(ants_path, "install")
+#     else:
+#         ants_dir = ants_path
+# else:
+#     ants_dir = ants_path
+# os.environ["ANTsDIR"] = ants_dir
+# os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
+# print(f"ANTs configured: ANTsDIR={ants_dir}")
+# print(f"PATH includes: {os.environ['PATH']}")
 
 class MSXplainReport:
     def __init__(self, flair_dir: str, t1_dir: str, output_dir: str):

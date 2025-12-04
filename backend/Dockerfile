@@ -1,5 +1,6 @@
 # Multi-stage build using official neuroimaging images
 FROM freesurfer/freesurfer:7.4.1 as freesurfer-stage
+FROM antsx/ants:2.5.3 as ants-stage
 
 # Main application stage
 FROM python:3.8-slim
@@ -62,57 +63,19 @@ RUN wget -q https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/releases/fslinstall
     && rm fslinstaller.py
 
 # Set FSL environment variables after installation
-ENV FSLDIR="/usr/share/fsl/6.0"
+# Note: FSL installs to /usr/share/fsl/ directly, not /usr/share/fsl/6.0/
+ENV FSLDIR="/usr/share/fsl"
 ENV FSLOUTPUTTYPE="NIFTI_GZ"
 ENV PATH="${FSLDIR}/bin:${PATH}"
 
-# Install ANTs from source using the official installation method
-RUN git clone https://github.com/cookpa/antsInstallExample.git && \
-    cd antsInstallExample && \
-    ls -la && \
-    bash installANTs.sh && \
-    mkdir -p /opt/ants && \
-    cp -R install/* /opt/ants/ && \
-    cd / && rm -rf antsInstallExample
-
-# Set ANTs environment variables
+# Copy ANTs from official image instead of building from source
 ENV ANTSPATH="/opt/ants/bin"
 ENV PATH="${ANTSPATH}:${PATH}"
+COPY --from=ants-stage /opt/ants /opt/ants
 
-
-# Copy FreeSurfer from official image (correct path: /usr/local/freesurfer)
-
-# Create symbolic links for the missing ITK libraries that ANTs expects
-# Use FSL's libraries and system libraries as they are more likely to be compatible
-RUN cd /usr/lib/x86_64-linux-gnu && \
-    ln -sf /usr/share/fsl/lib/libhdf5.so.310.2.0 libitkhdf5-shared-5.4.so.1 && \
-    ln -sf /usr/share/fsl/lib/libhdf5_cpp.so.310.0.2 libitkhdf5_cpp-shared-5.4.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libopenjp2.so.7 libitkopenjpeg-5.4.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libtiff.so.6 libitktiff-5.4.so.1 && \
-    echo "Created symbolic links for basic ITK libraries"
-
-# Create placeholder/dummy libraries for ITK components that might not be available
-# These are often optional components that ANTs was compiled with but might not be essential
-RUN cd /usr/lib/x86_64-linux-gnu && \
-    touch libITKIOIPL-5.4.so.1 && \
-    touch libITKIOLSM-5.4.so.1 && \
-    touch libITKIOSCANCO-5.4.so.1 && \
-    touch libITKIOBRUKER-5.4.so.1 && \
-    touch libITKIOGE-5.4.so.1 && \
-    touch libITKIOSiemens-5.4.so.1 && \
-    echo "Created placeholders for optional ITK libraries"
-
-# Create MINC symbolic link with multiple fallback options
-RUN cd /usr/lib/x86_64-linux-gnu && \
-    (ln -sf libminc2.so.5.3.0 libitkminc2-5.4.so.1 2>/dev/null || \
-     ln -sf libminc2.so.5.2.0 libitkminc2-5.4.so.1 2>/dev/null || \
-     ln -sf libminc2.so.5.2 libitkminc2-5.4.so.1 2>/dev/null || \
-     ln -sf libminc2.so libitkminc2-5.4.so.1 2>/dev/null || \
-     (echo "Creating placeholder MINC library" && touch libitkminc2-5.4.so.1)) && \
-    echo "MINC library link created"
-
-# Update library cache
-RUN ldconfig
+# Copy ANTs libraries to system library path so they can be found
+RUN cp -r /opt/ants/lib/* /usr/local/lib/ 2>/dev/null || true && \
+    ldconfig
 
 
 # Copy FreeSurfer from official image (correct path: /usr/local/freesurfer)
@@ -121,15 +84,19 @@ ENV PATH="${FREESURFER_HOME}/bin:${PATH}"
 COPY --from=freesurfer-stage /usr/local/freesurfer /usr/local/freesurfer
 
 # Install elastix from package manager instead of binary download
-RUN apt-get update && apt-get install -y \
-    elastix \
-    && rm -rf /var/lib/apt/lists/*
+# RUN apt-get update && apt-get install -y \
+#     elastix \
+#     && rm -rf /var/lib/apt/lists/*
 
 # Copy the application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p files/uploads files/processed files/DICOMS files/important_atlas
+# Verify tools are accessible (before switching to non-root user)
+RUN echo "Verifying PATH: $PATH" && \
+    echo "Checking fslorient..." && which fslorient && echo "✓ fslorient found" || echo "✗ fslorient NOT FOUND" && \
+    echo "Checking antsRegistration..." && which antsRegistration && echo "✓ antsRegistration found" || echo "✗ antsRegistration NOT FOUND" && \
+    echo "Checking mri_convert..." && which mri_convert && echo "✓ mri_convert found" || echo "✗ mri_convert NOT FOUND" && \
+    echo "Checking for FSL in common locations..." && ls -la /usr/share/fsl/ 2>/dev/null || echo "FSL directory not found"
 
 # Set up FreeSurfer license
 COPY secrets/license.txt ${FREESURFER_HOME}/license.txt
