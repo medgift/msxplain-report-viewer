@@ -56,7 +56,7 @@ services:
   #     - msxplain-network
 
   orthanc:
-    image: jodogne/orthanc-plugins:1.12.9
+    image: jodogne/orthanc-plugins:1.12.10
     container_name: msxplain_orthancPACS
     hostname: orthanc
     volumes:

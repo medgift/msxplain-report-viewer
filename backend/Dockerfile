@@ -91,12 +91,8 @@ COPY --from=freesurfer-stage /usr/local/freesurfer /usr/local/freesurfer
 # Copy the application code
 COPY . .
 
-# Verify tools are accessible (before switching to non-root user)
-RUN echo "Verifying PATH: $PATH" && \
-    echo "Checking fslorient..." && which fslorient && echo "✓ fslorient found" || echo "✗ fslorient NOT FOUND" && \
-    echo "Checking antsRegistration..." && which antsRegistration && echo "✓ antsRegistration found" || echo "✗ antsRegistration NOT FOUND" && \
-    echo "Checking mri_convert..." && which mri_convert && echo "✓ mri_convert found" || echo "✗ mri_convert NOT FOUND" && \
-    echo "Checking for FSL in common locations..." && ls -la /usr/share/fsl/ 2>/dev/null || echo "FSL directory not found"
+# IMPORTANT: Ensure system uses Python 3.8 
+ENV PATH="/usr/local/bin:${PATH}"
 
 # Set up FreeSurfer license
 COPY secrets/license.txt ${FREESURFER_HOME}/license.txt
