@@ -219,6 +219,9 @@ class MSXplainReport:
         # Brain extraction
         print("Running Brain extraction...")
         
+        device = "0" if torch.cuda.is_available() else "cpu"
+        print(f"HD-BET will use device: {device}")
+        
         for img_type in ['flair', 't1']:
             input_path = nifti_files[f"{img_type}_n4"]
             output_path = os.path.join(self.output_dir, f"{img_type}_brain.nii.gz")
@@ -226,6 +229,7 @@ class MSXplainReport:
                 "hd-bet",
                 "-i", input_path,
                 "-o", output_path,
+                "-device", device,
                 "-mode", "fast",
                 "-tta", "0"
             ])

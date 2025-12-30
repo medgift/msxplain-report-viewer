@@ -145,16 +145,37 @@ def upload_to_orthanc(base_folder: str) -> None:
     
     logger.info(f"Found {len(dicom_files)} DICOM files to upload")
     
-    # Extract patient ID from first DICOM file to check for existing segmentations
+    # Check if we're uploading segmentations - only delete existing ones if so
     patient_id = None
+    contains_segmentations = False
+    
     try:
+        # Check first file for patient ID and if any files are segmentations
         ds = pydicom.dcmread(dicom_files[0])
         patient_id = getattr(ds, 'PatientID', None)
         
+        # Check if any of the files being uploaded are segmentations
+        for file_path in dicom_files[:10]:  # Check first 10 files for efficiency
+            try:
+                ds = pydicom.dcmread(file_path)
+                modality = getattr(ds, 'Modality', '')
+                series_desc = getattr(ds, 'SeriesDescription', '')
+                
+                if modality == 'SEG' or 'segmentation' in series_desc.lower():
+                    contains_segmentations = True
+                    break
+            except:
+                continue
+        
         if patient_id:
             logger.info(f"Detected Patient ID: {patient_id}")
-            # Delete existing segmentations for this patient
-            delete_existing_segmentations(patient_id, orthanc_url)
+            
+            # Only delete existing segmentations if we're uploading new segmentations
+            if contains_segmentations:
+                logger.info("Uploading new segmentations - will delete existing ones first")
+                delete_existing_segmentations(patient_id, orthanc_url)
+            else:
+                logger.info("Not uploading segmentations - keeping existing segmentations")
         else:
             logger.warning("No Patient ID found in DICOM files")
     except Exception as e:
