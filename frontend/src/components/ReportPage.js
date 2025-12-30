@@ -14,7 +14,7 @@ const ReportPage = () => {
     if (run_id && patient_name && session) {  // Add session check
       setLoading(true);
       setError(null); // Clear previous error
-      fetch(`http://127.0.0.1:5000/api/report/${run_id}/${patient_name}/${session}`)  // Add session to API call
+      fetch(`/api/report/${run_id}/${patient_name}/${session}`)  // Add session to API call
         .then((response) => {
           if (!response.ok) {
             throw new Error('Report not found');
@@ -43,18 +43,17 @@ const ReportPage = () => {
   };
 
   const openOHIFViewer = () => {
+    // Use the current protocol and hostname (works on any server/IP)
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    const OHIF_URL = `${protocol}//${hostname}:8042/ohif/`;
+    
     // Check if we have the StudyInstanceUID from the report data
     if (reportData && reportData.study_instance_uid) {
-      // Use the current hostname (works on localhost, server IP, or domain)
-      const hostname = window.location.hostname;
-      const OHIF_URL = `http://${hostname}:8042/ohif/`;
       const viewerUrl = `${OHIF_URL}viewer?StudyInstanceUIDs=${reportData.study_instance_uid}`;
-      // Open in new tab with security attributes
       window.open(viewerUrl, '_blank', 'noopener,noreferrer');
     } else {
       // Fallback to OHIF home page if no StudyInstanceUID is available
-      const hostname = window.location.hostname;
-      const OHIF_URL = `http://${hostname}:8042/ohif/`;
       window.open(OHIF_URL, '_blank', 'noopener,noreferrer');
       console.warn('No StudyInstanceUID available, opening OHIF home page');
     }

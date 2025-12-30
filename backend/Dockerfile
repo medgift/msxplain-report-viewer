@@ -91,6 +91,9 @@ COPY --from=freesurfer-stage /usr/local/freesurfer /usr/local/freesurfer
 # Copy the application code
 COPY . .
 
+# Create necessary directories
+RUN mkdir -p files/uploads files/processed 
+
 # IMPORTANT: Ensure system uses Python 3.8 
 ENV PATH="/usr/local/bin:${PATH}"
 

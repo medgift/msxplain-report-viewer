@@ -19,7 +19,7 @@ const Viewer = () => {
     const fetchTotalLesions = async () => {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/total_lesions/${run_id}/${patient_name}`
+          `/api/total_lesions/${run_id}/${patient_name}`
         );
         const data = await response.json(); // Add this line to parse the JSON
         setLesionCounts(data);
@@ -87,7 +87,7 @@ const Viewer = () => {
           setLoading(true);
           try {
             const response = await fetch(
-              `http://localhost:5000/api/slice/${run_id}/${patient_name}/${sliceNumber}?show_false_positives=${showFalsePositives}`
+              `/api/slice/${run_id}/${patient_name}/${sliceNumber}?show_false_positives=${showFalsePositives}`
             );
             
             // Update max slice number from headers if available

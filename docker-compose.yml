@@ -4,12 +4,14 @@ services:
     build: ./backend
     image: msxplain_backend:dev
     container_name: msxplain_backend
-    user: "1000:1000"  # Run as non-root user (matches Dockerfile user)
+    user: "${UID:-1000}:${GID:-1000}"  # Use host user ID to avoid permission issues
     volumes:
       # Persist data
       - ./backend/files:/app/files
     ports:
       - "5000:5000"
+    environment:
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     # depends_on:
     #   - db
     restart: unless-stopped
@@ -25,6 +27,7 @@ services:
 
   msxplain_frontend:
     build: ./frontend
+    image: msxplain_backend:2.0
     container_name: msxplain_frontend
     ports:
       - "3001:80"
@@ -65,8 +68,8 @@ services:
       # Persist data
       - ./config_ohif_orthnac/volumes/orthanc-db/:/var/lib/orthanc/db/
     ports:
-      - '4242:4242' # Orthanc REST API
-      - '8042:8042' # Orthanc HTTP
+      - '4242:4242'
+      - '8042:8042'
     restart: unless-stopped
     networks:
       - msxplain-network
