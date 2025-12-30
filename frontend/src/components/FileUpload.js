@@ -23,9 +23,9 @@ const [runId, setRunId] = useState(null);
   };
 
   const uploadBatch = async (batch, formData, runId) => {
-    const url = new URL('http://localhost:5000/api/upload-dicoms');
+    let url = '/api/upload-dicoms';
     if (runId) {
-      url.searchParams.append('run_id', runId);
+      url += `?run_id=${runId}`;
     }
 
     const response = await fetch(url, {
@@ -97,7 +97,7 @@ const [runId, setRunId] = useState(null);
         setActiveRun(runId);
         localStorage.setItem('activeRun', runId);
         
-        const response = await fetch(`http://localhost:5000/api/process-scans/${runId}`, {
+        const response = await fetch(`/api/process-scans/${runId}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

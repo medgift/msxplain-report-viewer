@@ -28,10 +28,15 @@ processing_status: Dict[str, dict] = {}
 UPLOAD_FOLDER = "files/uploads"
 PROCESSED_FOLDER = "files/processed"
 
+# Get CORS origins from environment variable
+cors_origins = os.getenv("CORS_ORIGINS", "*")
+# Convert to list if comma-separated, otherwise use as wildcard
+allowed_origins = cors_origins.split(",") if cors_origins != "*" else ["*"]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],  # React app URL
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
