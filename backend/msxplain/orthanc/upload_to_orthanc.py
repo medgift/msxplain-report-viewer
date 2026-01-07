@@ -65,8 +65,7 @@ def delete_existing_segmentations(patient_id: str, orthanc_url: str = "http://or
         
         # For each patient match
         for patient in patients:
-            patient_uid = patient.get('ID')
-            
+
             # Get all studies for this patient
             for study_uid in patient.get('Studies', []):
                 study_url = f"{orthanc_url}/studies/{study_uid}"

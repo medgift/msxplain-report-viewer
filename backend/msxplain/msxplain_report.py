@@ -280,7 +280,6 @@ class MSXplainReport:
         try:
             reg_dir = os.path.join(self.output_dir, "registration")
             flair_brain = os.path.join(self.output_dir, "flair_brain.nii.gz")
-            t1_brain = os.path.join(self.output_dir, "t1_brain.nii.gz")
             lesion_map = os.path.join(self.output_dir, "lesion_map.nii.gz")
 
             forward_mat = os.path.join(reg_dir, "ants_0GenericAffine.mat")
