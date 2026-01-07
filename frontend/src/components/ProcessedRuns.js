@@ -11,7 +11,7 @@ const ProcessedRuns = () => {
   useEffect(() => {
     const fetchRuns = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/processed-runs');
+        const response = await axios.get('/api/processed-runs');
         setRuns(response.data);
       } catch (error) {
         console.error('Error fetching runs:', error);

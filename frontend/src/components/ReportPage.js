@@ -14,7 +14,7 @@ const ReportPage = () => {
     if (run_id && patient_name && session) {  // Add session check
       setLoading(true);
       setError(null); // Clear previous error
-      fetch(`http://127.0.0.1:5000/api/report/${run_id}/${patient_name}/${session}`)  // Add session to API call
+      fetch(`/api/report/${run_id}/${patient_name}/${session}`)  // Add session to API call
         .then((response) => {
           if (!response.ok) {
             throw new Error('Report not found');
@@ -25,6 +25,8 @@ const ReportPage = () => {
           if (data.error) {
             setError(data.error); // Handle error from backend
           } else {
+            console.log('Report data received:', data);
+            console.log('StudyInstanceUID:', data.study_instance_uid);
             setReportData(data); // Set the summary data
           }
           setLoading(false); // Set loading to false after data is fetched
@@ -41,11 +43,20 @@ const ReportPage = () => {
   };
 
   const openOHIFViewer = () => {
-    // Hardcode the OHIF URL since we know it's running on port 3000
-    const OHIF_URL = 'http://127.0.0.1/';    // Construct the full URL with study parameters
-    const viewerUrl = `${OHIF_URL}`;
-    // Open in new tab with security attributes
-    window.open(viewerUrl, '_blank', 'noopener,noreferrer');
+    // Use the current protocol and hostname (works on any server/IP)
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    const OHIF_URL = `${protocol}//${hostname}:8042/ohif/`;
+    
+    // Check if we have the StudyInstanceUID from the report data
+    if (reportData && reportData.study_instance_uid) {
+      const viewerUrl = `${OHIF_URL}viewer?StudyInstanceUIDs=${reportData.study_instance_uid}`;
+      window.open(viewerUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      // Fallback to OHIF home page if no StudyInstanceUID is available
+      window.open(OHIF_URL, '_blank', 'noopener,noreferrer');
+      console.warn('No StudyInstanceUID available, opening OHIF home page');
+    }
   };
 
   const handleLoadReport = () => {
