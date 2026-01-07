@@ -1,0 +1,44 @@
+# App
+files/
+
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+README.md
+
+# Test files
+*_test.py
+test_*.py
+tests/
+
+# Temporary files
+*.tmp
+*.log
+
+# Docker files
+Dockerfile*
+docker-compose*
+
+# OS files
+.DS_Store
+Thumbs.db

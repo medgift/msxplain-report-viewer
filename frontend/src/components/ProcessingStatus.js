@@ -24,7 +24,7 @@ const ProcessingStatus = () => {
       if (!activeRun) return;
 
       try {
-        const response = await fetch(`http://localhost:5000/api/process-status/${activeRun}`);
+        const response = await fetch(`/api/process-status/${activeRun}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }

@@ -16,27 +16,66 @@ from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
 
 
-def load_config():
-    config_path = Path(__file__).parent.parent / 'config.yml'
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+# def load_config():
+#     config_path = Path(__file__).parent.parent / 'config.yml'
+#     with open(config_path, 'r') as f:
+#         return yaml.safe_load(f)
 
-# Load configuration
-config = load_config()
+# # Load configuration
+# config = load_config()
 
-# Set FSLDIR and FREESURFER and ANTs PATH
-fsl_dir = config['paths']['fsl_dir']
-os.environ["FSLDIR"] = fsl_dir
-os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
-os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
+# # Set FSLDIR and FREESURFER and ANTs PATH
+# # Use environment variables if available (for Docker), otherwise use config
+# fsl_dir = os.environ.get("FSLDIR", config['paths']['fsl_dir'])
+# # For Docker, check if FSL is in the expected Docker locations
+# if os.path.exists("/usr/share/fsl/6.0/bin/fslorient"):
+#     fsl_dir = "/usr/share/fsl/6.0"
+# elif os.path.exists("/usr/share/fsl/bin/fslorient"):
+#     fsl_dir = "/usr/share/fsl"
+# os.environ["FSLDIR"] = fsl_dir
+# os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
+# os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
+# print(f"FSL configured: FSLDIR={fsl_dir}")
+# print(f"PATH includes: {os.environ['PATH']}")
 
-freesurfer_home = config['paths']['freesurfer_home']
-os.environ["FREESURFER_HOME"] = freesurfer_home
-os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
+# Debug: Check if fslorient is actually available
+# import subprocess
+# try:
+#     result = subprocess.run(['which', 'fslorient'], capture_output=True, text=True, env=os.environ.copy())
+#     if result.returncode == 0:
+#         print(f"fslorient found at: {result.stdout.strip()}")
+#     else:
+#         print("fslorient not found in PATH")
+#         # Let's check common locations
+#         potential_paths = [
+#             "/usr/share/fsl/6.0/bin/fslorient",
+#             "/usr/share/fsl/bin/fslorient",
+#             "/usr/share/fsl/share/fsl/bin/fslorient"
+#         ]
+#         for path in potential_paths:
+#             if os.path.exists(path):
+#                 print(f"Found fslorient at: {path}")
+# except Exception as e:
+#     print(f"Error checking fslorient: {e}")
 
-ants_dir = os.path.join(config['paths']['ants_dir'], "install")
-os.environ["ANTsDIR"] = ants_dir
-os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
+# freesurfer_home = os.environ.get("FREESURFER_HOME", config['paths']['freesurfer_home'])
+# os.environ["FREESURFER_HOME"] = freesurfer_home
+# os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
+# print(f"FreeSurfer configured: FREESURFER_HOME={freesurfer_home}")
+
+# ants_path = os.environ.get("ANTSPATH", config['paths']['ants_dir'])
+# # Handle both cases where ants_dir might include /install or not
+# if not ants_path.endswith('/install') and not ants_path.endswith('/bin'):
+#     if os.path.exists(os.path.join(ants_path, 'install')):
+#         ants_dir = os.path.join(ants_path, "install")
+#     else:
+#         ants_dir = ants_path
+# else:
+#     ants_dir = ants_path
+# os.environ["ANTsDIR"] = ants_dir
+# os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
+# print(f"ANTs configured: ANTsDIR={ants_dir}")
+# print(f"PATH includes: {os.environ['PATH']}")
 
 class MSXplainReport:
     def __init__(self, flair_dir: str, t1_dir: str, output_dir: str):
@@ -109,7 +148,8 @@ class MSXplainReport:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                env=os.environ.copy()  # Pass current environment variables
             )
             stdout, stderr = process.communicate()
             
@@ -179,6 +219,9 @@ class MSXplainReport:
         # Brain extraction
         print("Running Brain extraction...")
         
+        device = "0" if torch.cuda.is_available() else "cpu"
+        print(f"HD-BET will use device: {device}")
+        
         for img_type in ['flair', 't1']:
             input_path = nifti_files[f"{img_type}_n4"]
             output_path = os.path.join(self.output_dir, f"{img_type}_brain.nii.gz")
@@ -186,32 +229,85 @@ class MSXplainReport:
                 "hd-bet",
                 "-i", input_path,
                 "-o", output_path,
+                "-device", device,
                 "-mode", "fast",
                 "-tta", "0"
             ])
             nifti_files[f"{img_type}_brain"] = output_path
         
-        # Elastix registration
-        print("Running Elastix registration...")
+        # # Elastix registration
+        # print("Running Elastix registration...")
         
+        # self.run_command([
+        #     "elastix",
+        #     "-f", nifti_files['t1_brain'],  # fixed image (T1)
+        #     "-m", nifti_files['flair_brain'],  # moving image (FLAIR)
+        #     "-out", reg_dir,
+        #     "-p", self.registration_params
+        # ])
+
+        # ANTs registration as alternative/verification
+        print("Running ANTs registration...")
         reg_dir = os.path.join(self.output_dir, "registration")
         os.makedirs(reg_dir, exist_ok=True)
         
+        ants_output_prefix = os.path.join(reg_dir, "ants_")
         self.run_command([
-            "elastix",
-            "-f", nifti_files['t1_brain'],  # fixed image (T1)
-            "-m", nifti_files['flair_brain'],  # moving image (FLAIR)
-            "-out", reg_dir,
-            "-p", self.registration_params
+            "antsRegistration",
+            "--dimensionality", "3",
+            "--float", "0",
+            "--output", f"[{ants_output_prefix},{ants_output_prefix}registration.nii.gz]",
+            "--winsorize-image-intensities", "[0.005,0.995]",
+            "--use-histogram-matching", "0",
+            "--initial-moving-transform", f"[{nifti_files['t1_brain']},{nifti_files['flair_brain']},1]",
+            "--transform", "Rigid[0.1]",
+            "--metric", f"Mattes[{nifti_files['t1_brain']},{nifti_files['flair_brain']},1,32,Regular,0.25]",
+            "--convergence", "[1000x500x250x100,1e-6,10]",
+            "--shrink-factors", "8x4x2x1",
+            "--smoothing-sigmas", "3x2x1x0vox"
         ])
         
         # Move registered FLAIR
-        registered_flair = os.path.join(reg_dir, "result.0.nii.gz")
+        registered_flair = os.path.join(reg_dir, "ants_registration.nii.gz")
         final_flair = os.path.join(self.output_dir, "flair_registered.nii.gz")
         os.rename(registered_flair, final_flair)
         nifti_files['flair_registered'] = final_flair
         
         return nifti_files
+    
+    def register_lesion_map_to_flair_ants(self):
+        """Inverse ANTs rigid transform lesion_map (in T1 space) back to original FLAIR space using ANTs."""
+        try:
+            reg_dir = os.path.join(self.output_dir, "registration")
+            flair_brain = os.path.join(self.output_dir, "flair_brain.nii.gz")
+            lesion_map = os.path.join(self.output_dir, "lesion_map.nii.gz")
+
+            forward_mat = os.path.join(reg_dir, "ants_0GenericAffine.mat")
+            if not os.path.exists(forward_mat):
+                raise FileNotFoundError(f"Forward ANTs affine not found: {forward_mat}")
+            if not os.path.exists(lesion_map):
+                raise FileNotFoundError(f"Lesion map not found: {lesion_map}")
+
+            # Apply inverse transform to lesion map using antsApplyTransforms
+            # Using [transform, 1] applies the inverse of the transform
+            output_path = os.path.join(self.output_dir, "lesion_map_flair_space_ants.nii.gz")
+            
+            print("Applying inverse ANTs transform to lesion map...")
+            self.run_command([
+                "antsApplyTransforms",
+                "-d", "3",
+                "-i", lesion_map,
+                "-r", flair_brain,
+                "-t", f"[{forward_mat},1]",  # [transform, 1] means apply inverse
+                "-n", "NearestNeighbor",
+                "-o", output_path
+            ])
+
+            return output_path
+        except Exception as e:
+            print(f"Error inverse transforming lesion map with ANTs: {e}")
+            traceback.print_exc()
+            return None
     
     def register_lesion_map_to_flair(self):
         """Transform lesion map to the original space"""

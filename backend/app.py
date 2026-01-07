@@ -12,6 +12,7 @@ import numpy as np
 from io import BytesIO
 from PIL import Image
 import pydicom
+import requests
 from typing import List, Dict
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
@@ -27,10 +28,15 @@ processing_status: Dict[str, dict] = {}
 UPLOAD_FOLDER = "files/uploads"
 PROCESSED_FOLDER = "files/processed"
 
+# Get CORS origins from environment variable
+cors_origins = os.getenv("CORS_ORIGINS", "*")
+# Convert to list if comma-separated, otherwise use as wildcard
+allowed_origins = cors_origins.split(",") if cors_origins != "*" else ["*"]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],  # React app URL
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -124,6 +130,44 @@ async def get_report(run_id: str, patient_name: str, session: str):
             print(f"Error reading DICOM metadata: {str(e)}")
             patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
 
+        # Get StudyInstanceUID from Orthanc for this patient
+        study_instance_uid = None
+        try:
+            # Query Orthanc for studies by patient ID using the tools/find API
+            orthanc_url = "http://orthanc:8042"
+            
+            # Use Orthanc's tools/find API to search for studies by PatientID
+            search_payload = {
+                "Level": "Study",
+                "Query": {
+                    "PatientID": patient_id
+                },
+                "Expand": True
+            }
+            
+            search_response = requests.post(
+                f"{orthanc_url}/tools/find",
+                json=search_payload
+            )
+            
+            if search_response.status_code == 200:
+                studies = search_response.json()
+                print(f"Found {len(studies)} studies for patient {patient_id}")
+                if studies:
+                    # Get the StudyInstanceUID from the first study
+                    # The response is a list of study resources with full details
+                    first_study = studies[0]
+                    study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
+                    print(f"StudyInstanceUID: {study_instance_uid}")
+                else:
+                    print(f"No studies found for patient {patient_id}")
+            else:
+                print(f"Failed to query Orthanc: {search_response.status_code}")
+        except Exception as e:
+            print(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
         # Check if McDonald Criteria is fulfilled
         lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
         affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
@@ -148,7 +192,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_name": patient_name if patient_name else "Unknown",
             "patient_id": patient_id if patient_id else "Unknown",
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
-            "patient_sex": patient_sex if patient_sex else "Unknown"
+            "patient_sex": patient_sex if patient_sex else "Unknown",
+            "study_instance_uid": study_instance_uid if study_instance_uid else None
         }
         return report_data
     except Exception as e:
@@ -514,15 +559,19 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             report_df.to_excel(report_path, index=False)
                             
                             # Register lesion_map to Flair original space
-                            lesion_map_flair_space = executor.submit(
-                                msxplain.register_lesion_map_to_flair
+                            # lesion_map_flair_space = executor.submit(
+                            #     msxplain.register_lesion_map_to_flair
+                            # ).result()
+                            
+                            lesion_map_flair_space_ants = executor.submit(
+                                msxplain.register_lesion_map_to_flair_ants
                             ).result()
                             
                             status['steps']['report'] = 'completed'
                             status['status'] = 'completed'
                             
                             lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
-                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space.nii.gz"))
+                            lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
                             # Convert segmentation to DICOM-SEG
                             print("Converting NIFTI label maps to DCM SEG...")
@@ -534,13 +583,10 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             
-                            # Upload DCM SEG to Orthanc
+                            # Upload MPRAGE, FLAIR and lesion map outputs(DCM SEG) to Orthanc
+                            upload_to_orthanc(flair_dir)
+                            upload_to_orthanc(t1_dir)
                             upload_to_orthanc(session_output_dir)
-                            
-                            # Convert segmentation to DICOM-SEG
-                            # seg_path = os.path.join(patient_output_dir, "segmentation.nii.gz")
-                            # dicom_dir = os.path.join(patient_path, "dicoms")
-                            # seg_output = os.path.join(patient_output_dir, "segmentation.dcm")
 
                         except Exception as e:
                             print(f"Error processing session {session} for patient {patient_dir}: {str(e)}")
@@ -579,64 +625,6 @@ def find_input_directories(patient_path):
         
     return flair_dir, t1_dir
 
-# def convert_segmentation_to_dicomseg(nifti_path, dicom_dir, output_path):
-#     """Convert NIfTI segmentation to DICOM-SEG"""
-#     # Create metadata for the DICOM-SEG
-#     metadata = {
-#         "ContentCreatorName": "MSXplain",
-#         "SeriesDescription": "MS Lesion Segmentation",
-#         "SegmentAlgorithmName": "MSXplain v1.0",
-#         "SegmentationCategoryCodeSequence": {
-#             "CodeValue": "125001",
-#             "CodingSchemeDesignator": "DCM",
-#             "CodeMeaning": "Tissue"
-#         }
-#     }
-    
-#     # Write metadata to temp file
-#     with tempfile.NamedTemporaryFile(suffix='.json', mode='w') as f:
-#         json.dump(metadata, f)
-#         f.flush()
-        
-#         # Convert NIfTI to DICOM-SEG
-#         nifti_to_dicomseg(
-#             nifti_path,
-#             dicom_dir,
-#             f.name,
-#             output_path
-#         )
-        
-# def convert_segmentation_to_dicom(self):
-#         nifti_seg_file = 
-
-#         output_paths = []
-
-#         for dicom_path in self.dicom_paths:
-#             sitk_image = SimpleITK.ReadImage(nifti_seg_file)
-#             dicom_paths_groups = re.match(dicom_path_regex, dicom_path).groupdict()
-#             output_directory = f"{self.output_path_dicomseg}"
-#             os.makedirs(output_directory, exist_ok=True)
-#             output_path = (
-#                 f"{output_directory}/{dicom_paths_groups['series_type']}-seg.dcm"
-#             )
-
-#             dicom_path_with_files = self.get_directory_with_files(dicom_path)
-#             print("Generating DICOM SEG for " + dicom_path)
-#             nifti_to_seg(
-#                 sitk_image,
-#                 dicom_path_with_files,
-#                 output_path,
-#                 roi_dict,
-#                 series_description=f"{dicom_paths_groups['series_type']} - Segmentation",
-#                 match_orientation_flag=True,
-#                 match_size_flag=True,
-#                 skip_empty_slices=True,
-#                 fractional=self.is_fractional,
-#             )
-
-#             output_paths.append(output_path)
-
-#         self.output_dicom_files = output_paths
 
 @app.get("/api/process-status/{run_id}")
 async def get_process_status(run_id: str):
@@ -775,23 +763,10 @@ async def get_processed_runs():
             status_code=500
         )
 
-# @app.post("/api/update-ohif-studies")
-# async def update_ohif_studies():
-#     try:
-#         from create_study_list import create_ohif_study_list
-        
-#         create_ohif_study_list(
-#             PROCESSED_FOLDER,
-#             os.path.join(os.path.dirname(__file__), "studies.json")
-#         )
-        
-#         return {"message": "OHIF study list updated successfully"}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
 def main():
     """Run the FastAPI application"""
     uvicorn.run(app, host="0.0.0.0", port=5000)
+
 
 if __name__ == "__main__":
     main()
