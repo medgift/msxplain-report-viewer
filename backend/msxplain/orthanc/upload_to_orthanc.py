@@ -25,19 +25,20 @@ def find_dicom_files(base_folder: str) -> list:
      
     return dicom_files
 
-def delete_existing_segmentations(patient_id: str, orthanc_url: str = "http://orthanc:8042") -> bool:
+def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: str = "http://orthanc:8042") -> bool:
     """
-    Delete existing segmentation series for a patient in Orthanc
+    Delete existing segmentation series for a specific patient's study/session in Orthanc
     
     Args:
         patient_id: The patient ID to search for
+        study_uid: The Study Instance UID to match (identifies specific session)
         orthanc_url: Orthanc server URL
         
     Returns:
         bool: True if successful, False otherwise
     """
     try:
-        logger.info(f"Checking for existing segmentations for patient: {patient_id}")
+        logger.info(f"Checking for existing segmentations for patient: {patient_id}, study: {study_uid}")
         
         # Search for patient in Orthanc
         search_url = f"{orthanc_url}/tools/find"
@@ -67,9 +68,19 @@ def delete_existing_segmentations(patient_id: str, orthanc_url: str = "http://or
         for patient in patients:
 
             # Get all studies for this patient
-            for study_uid in patient.get('Studies', []):
-                study_url = f"{orthanc_url}/studies/{study_uid}"
+            for study_uid_orthanc in patient.get('Studies', []):
+                study_url = f"{orthanc_url}/studies/{study_uid_orthanc}"
                 study_data = requests.get(study_url).json()
+                
+                # Check if this study matches our target study UID
+                study_instance_uid = study_data.get('MainDicomTags', {}).get('StudyInstanceUID', '')
+                
+                # Only process segmentations from the SAME study/session
+                if study_instance_uid != study_uid:
+                    logger.debug(f"Skipping study {study_uid_orthanc} - different session")
+                    continue
+                
+                logger.info(f"Found matching study/session: {study_uid_orthanc}")
                 
                 # Get all series in this study
                 for series_uid in study_data.get('Series', []):
@@ -146,12 +157,14 @@ def upload_to_orthanc(base_folder: str) -> None:
     
     # Check if we're uploading segmentations - only delete existing ones if so
     patient_id = None
+    study_uid = None
     contains_segmentations = False
     
     try:
-        # Check first file for patient ID and if any files are segmentations
+        # Check first file for patient ID, study UID, and if any files are segmentations
         ds = pydicom.dcmread(dicom_files[0])
         patient_id = getattr(ds, 'PatientID', None)
+        study_uid = getattr(ds, 'StudyInstanceUID', None)
         
         # Check if any of the files being uploaded are segmentations
         for file_path in dicom_files[:10]:  # Check first 10 files for efficiency
@@ -166,19 +179,19 @@ def upload_to_orthanc(base_folder: str) -> None:
             except:
                 continue
         
-        if patient_id:
-            logger.info(f"Detected Patient ID: {patient_id}")
+        if patient_id and study_uid:
+            logger.info(f"Detected Patient ID: {patient_id}, Study UID: {study_uid}")
             
             # Only delete existing segmentations if we're uploading new segmentations
             if contains_segmentations:
-                logger.info("Uploading new segmentations - will delete existing ones first")
-                delete_existing_segmentations(patient_id, orthanc_url)
+                logger.info("Uploading new segmentations - will delete existing ones from THIS session only")
+                delete_existing_segmentations(patient_id, study_uid, orthanc_url)
             else:
-                logger.info("Not uploading segmentations - keeping existing segmentations")
+                logger.info("Not uploading segmentations - keeping all existing segmentations")
         else:
-            logger.warning("No Patient ID found in DICOM files")
+            logger.warning(f"Missing Patient ID or Study UID in DICOM files (Patient ID: {patient_id}, Study UID: {study_uid})")
     except Exception as e:
-        logger.warning(f"Could not extract Patient ID: {e}")
+        logger.warning(f"Could not extract Patient ID or Study UID: {e}")
     
     success_count = 0
     error_count = 0

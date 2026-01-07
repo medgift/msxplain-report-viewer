@@ -583,9 +583,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             
-                            # Upload MPRAGE, FLAIR and lesion map outputs(DCM SEG) to Orthanc
-                            upload_to_orthanc(flair_dir)
-                            upload_to_orthanc(t1_dir)
+                            # Upload lesion map outputs(DCM SEG) to Orthanc
                             upload_to_orthanc(session_output_dir)
 
                         except Exception as e:
