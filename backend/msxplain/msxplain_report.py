@@ -357,8 +357,8 @@ class MSXplainReport:
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
         
-        # Create SAMSEG directory
-        samseg_dir = os.path.join(self.output_dir, "SAMSEG")
+        # Create SYNTHSEG directory
+        samseg_dir = os.path.join(self.output_dir, "SYNTHSEG")
         os.makedirs(samseg_dir, exist_ok=True)
         
         # Run prediction with CUDA override
@@ -372,8 +372,8 @@ class MSXplainReport:
             force_cuda=True
         )
         
-        # Run SAMSEG processing
-        print("Running SAMSEG processing...")
+        # Run WMH-SynthSeg processing
+        print("Running WMH-SynthSeg processing...")
         
         run_samseg_processing(
             patient_dir=self.output_dir,
@@ -393,7 +393,7 @@ class MSXplainReport:
             patient_id=self.patient_id,
             flair_path=os.path.join(self.output_dir, "flair_registered.nii.gz"),
             pred_path=prediction_file,
-            samseg_path=os.path.join(self.output_dir, "SAMSEG")
+            samseg_path=os.path.join(self.output_dir, "SYNTHSEG")
         )
         
         return report_df

@@ -4,7 +4,7 @@ import traceback
 
 
 def run_samseg_processing(patient_dir, t1_path, pred_path):
-    """Run SAMSEG processing pipeline using FreeSurfer and FSL
+    """Run WMH-SynthSeg processing pipeline (replaces SAMSEG with WMH-SynthSeg)
     
     Args:
         patient_dir (str): Path to patient directory
@@ -13,27 +13,55 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
     """
 
     try:
-        samseg_dir = os.path.join(patient_dir, "SAMSEG")
+        samseg_dir = os.path.join(patient_dir, "SYNTHSEG")
+        os.makedirs(samseg_dir, exist_ok=True)
         
-        # Run SAMSEG
-        print("Running SAMSEG segmentation...")
-        subprocess.run([
-            "run_samseg",
-            "--input", t1_path,
-            "--output", samseg_dir,
-            "--threads", "2"
-        ],
-                       stdout=subprocess.DEVNULL,
-                       check=True)
+        # Force CPU usage to avoid GPU memory issues
+        device = "cpu"
+        print(f"WMH-SynthSeg will use device: {device}")
         
-        # Convert MGZ to NIFTI
-        subprocess.run([
-            "mri_convert",
-            os.path.join(samseg_dir, "seg.mgz"),
-            os.path.join(samseg_dir, "seg.nii.gz")
+        # Run WMH-SynthSeg segmentation
+        print("Running WMH-SynthSeg segmentation...")
+        print(f"Input T1 path: {t1_path}")
+        seg_output = os.path.join(samseg_dir, "seg.nii.gz")
+        
+        # Convert to absolute paths
+        abs_t1_path = os.path.abspath(t1_path)
+        abs_seg_output = os.path.abspath(seg_output)
+        abs_csv_path = os.path.abspath(os.path.join(samseg_dir, "vols.csv"))
+        
+        print(f"Absolute T1 path: {abs_t1_path}")
+        print(f"Absolute output path: {abs_seg_output}")
+        
+        result = subprocess.run([
+            "python",
+            "/app/wmh_synthseg/WMHSynthSeg/inference.py",
+            "--i", abs_t1_path,
+            "--o", abs_seg_output,
+            "--csv_vols", abs_csv_path,
+            "--device", device,
+            "--threads", "1"
         ],
-                       stdout=subprocess.DEVNULL,
-                       check=True)
+                       capture_output=True,
+                       text=True,
+                       check=False)
+        
+        print(f"WMH-SynthSeg stdout:\n{result.stdout}")
+        if result.stderr:
+            print(f"WMH-SynthSeg stderr:\n{result.stderr}")
+        print(f"Return code: {result.returncode}")
+        
+        if result.returncode == -9:
+            raise RuntimeError("WMH-SynthSeg was killed (likely out of memory). Consider increasing Docker memory limit or using a smaller image.")
+        elif result.returncode != 0:
+            raise RuntimeError(f"WMH-SynthSeg failed with return code {result.returncode}")
+        
+        # Verify output file was created
+        if not os.path.exists(seg_output):
+            print(f"Contents of SYNTHSEG directory: {os.listdir(samseg_dir) if os.path.exists(samseg_dir) else 'Directory does not exist'}")
+            raise FileNotFoundError(f"WMH-SynthSeg did not create output file: {seg_output}")
+        
+        print(f"Segmentation file created successfully: {seg_output}")
         
         # Create individual structure masks
         print("Creating structure masks...")

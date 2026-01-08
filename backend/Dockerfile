@@ -1,5 +1,4 @@
 # Multi-stage build using official neuroimaging images
-FROM freesurfer/freesurfer:7.4.1 as freesurfer-stage
 FROM antsx/ants:2.5.3 as ants-stage
 
 # Main application stage
@@ -77,11 +76,16 @@ COPY --from=ants-stage /opt/ants /opt/ants
 RUN cp -r /opt/ants/lib/* /usr/local/lib/ 2>/dev/null || true && \
     ldconfig
 
+# Install WMH-SynthSeg (replaces FreeSurfer)
+RUN git clone https://github.com/lasopablo/freesurfer-freesurfer-dev-mri_WMHsynthseg.git /app/wmh_synthseg && \
+    mkdir -p /app/wmh_synthseg/models && \
+    wget -O /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth https://ftp.nmr.mgh.harvard.edu/pub/dist/lcnpublic/dist/WMH-SynthSeg/WMH-SynthSeg_v10_231110.pth && \
+    sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py
 
-# Copy FreeSurfer from official image (correct path: /usr/local/freesurfer)
-ENV FREESURFER_HOME="/usr/local/freesurfer"
-ENV PATH="${FREESURFER_HOME}/bin:${PATH}"
-COPY --from=freesurfer-stage /usr/local/freesurfer /usr/local/freesurfer
+# Set WMH-SynthSeg environment
+ENV WMHSYNTHSEG_HOME="/app/wmh_synthseg"
+ENV PATH="${WMHSYNTHSEG_HOME}:${PATH}"
+ENV PYTHONPATH="${WMHSYNTHSEG_HOME}:${PYTHONPATH}"
 
 # Install elastix from package manager instead of binary download
 # RUN apt-get update && apt-get install -y \
@@ -96,9 +100,6 @@ RUN mkdir -p files/uploads files/processed
 
 # IMPORTANT: Ensure system uses Python 3.8 
 ENV PATH="/usr/local/bin:${PATH}"
-
-# Set up FreeSurfer license
-COPY secrets/license.txt ${FREESURFER_HOME}/license.txt
 
 # Create a non-root user to run the application
 RUN groupadd -r msxplain && useradd -r -g msxplain -u 1000 msxplain
