@@ -16,9 +16,14 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
         samseg_dir = os.path.join(patient_dir, "SYNTHSEG")
         os.makedirs(samseg_dir, exist_ok=True)
         
-        # Force CPU usage to avoid GPU memory issues
-        device = "cpu"
-        print(f"WMH-SynthSeg will use device: {device}")
+        # Detect GPU availability
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"WMH-SynthSeg will use device: {device}")
+        except ImportError:
+            device = "cpu"
+            print("PyTorch not available, using CPU")
         
         # Run WMH-SynthSeg segmentation
         print("Running WMH-SynthSeg segmentation...")
@@ -39,8 +44,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
             "--i", abs_t1_path,
             "--o", abs_seg_output,
             "--csv_vols", abs_csv_path,
-            "--device", device,
-            "--threads", "1"
+            "--device", device
         ],
                        capture_output=True,
                        text=True,
