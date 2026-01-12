@@ -1,6 +1,7 @@
 import os
 import subprocess
 import traceback
+import logging
 
 
 def run_samseg_processing(patient_dir, t1_path, pred_path):
@@ -16,7 +17,6 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
         samseg_dir = os.path.join(patient_dir, "SAMSEG")
         
         # Run SAMSEG
-        print("Running SAMSEG segmentation...")
         subprocess.run([
             "run_samseg",
             "--input", t1_path,
@@ -36,7 +36,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        check=True)
         
         # Create individual structure masks
-        print("Creating structure masks...")
+        logging.info("Creating structure masks...")
         structures = {
             "LeftWM": (1.5, 2.5),
             "LeftCerebralCortex": (2.5, 3.5),
@@ -64,7 +64,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                            check=True)
         
         # Create WM mask
-        print("Creating WM mask...")
+        logging.info("Creating WM mask...")
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LeftWM.nii.gz"),
@@ -84,7 +84,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        check=True)
         
         # Create Cortex mask
-        print("Creating Cortex mask...")
+        logging.info("Creating Cortex mask...")
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LeftCerebralCortex.nii.gz"),
@@ -122,7 +122,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        check=True)
         
         # Create Ventricles mask
-        print("Creating Ventricles mask...")
+        logging.info("Creating Ventricles mask...")
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "LeftLateralVentricle.nii.gz"),
@@ -160,7 +160,7 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
                        check=True)
         
         # Create Infratentorial mask
-        print("Creating Infratentorial mask...")
+        logging.info("Creating Infratentorial mask...")
         subprocess.run([
             "fslmaths",
             os.path.join(samseg_dir, "Brainstem.nii.gz"),
@@ -186,10 +186,10 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
         os.remove(os.path.join(samseg_dir, "common2.nii.gz"))
         
     except subprocess.CalledProcessError as e:
-        print(f"Error in SAMSEG processing: {str(e)}")
+        logging.error(f"Error in SAMSEG processing: {str(e)}")
         traceback.print_exc()
         raise
     except Exception as e:
-        print(f"Unexpected error in SAMSEG processing: {str(e)}")
+        logging.error(f"Unexpected error in SAMSEG processing: {str(e)}")
         traceback.print_exc()
         raise 

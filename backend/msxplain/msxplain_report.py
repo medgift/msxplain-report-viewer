@@ -9,6 +9,7 @@ import pydicom
 import SimpleITK as sitk
 import torch
 import pandas as pd
+import logging
 from .report_provider.predict import predict_msxplain
 from .report_provider.samseg_processing import run_samseg_processing
 from .report_provider.lesion_information import generate_lesion_report
@@ -132,11 +133,11 @@ class MSXplainReport:
             # Clean the ID to be filesystem-friendly
             patient_id = ''.join(c for c in patient_id if c.isalnum() or c in '_-')
             
-            print(f"Using Patient ID: {patient_id}")
+            logging.info(f"Using Patient ID: {patient_id}")
             return patient_id
             
         except Exception as e:
-            print(f"Error getting patient ID: {str(e)}")
+            logging.error(f"Error getting patient ID: {str(e)}")
             traceback.print_exc()
             # Fallback to timestamp if there's an error
             return f"PATIENT_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -158,13 +159,13 @@ class MSXplainReport:
                 
             return stdout
         except Exception as e:
-            print(f"Error running command {' '.join(command)}: {str(e)}")
+            logging.error(f"Error running command {' '.join(command)}: {str(e)}")
             traceback.print_exc()
             raise
 
     def convert_dicoms_to_nifti(self):
         """Convert DICOM series to NIFTI format"""
-        print("Converting DICOM series to NIFTI...")
+        logging.info("Converting DICOM series to NIFTI...")
         
         # Convert FLAIR
         flair_command = [
@@ -195,7 +196,7 @@ class MSXplainReport:
     def preprocess_images(self, nifti_files):
         """Run preprocessing steps on NIFTI files"""
 
-        print("Running FSL orientation...")
+        logging.info("Running FSL orientation...")
         
         # FSL orientation steps
         for img_path in [nifti_files['flair'], nifti_files['t1']]:
@@ -203,7 +204,7 @@ class MSXplainReport:
             self.run_command(["fslreorient2std", img_path])
         
         # N4 Bias field correction
-        print("Running N4 Bias field correction...")
+        logging.info("Running N4 Bias field correction...")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[img_type]
@@ -217,10 +218,10 @@ class MSXplainReport:
             
         
         # Brain extraction
-        print("Running Brain extraction...")
+        logging.info("Running Brain extraction...")
         
         device = "0" if torch.cuda.is_available() else "cpu"
-        print(f"HD-BET will use device: {device}")
+        logging.info(f"HD-BET will use device: {device}")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[f"{img_type}_n4"]
@@ -247,7 +248,7 @@ class MSXplainReport:
         # ])
 
         # ANTs registration as alternative/verification
-        print("Running ANTs registration...")
+        logging.info("Running ANTs registration...")
         reg_dir = os.path.join(self.output_dir, "registration")
         os.makedirs(reg_dir, exist_ok=True)
         
@@ -292,7 +293,7 @@ class MSXplainReport:
             # Using [transform, 1] applies the inverse of the transform
             output_path = os.path.join(self.output_dir, "lesion_map_flair_space_ants.nii.gz")
             
-            print("Applying inverse ANTs transform to lesion map...")
+            logging.info("Applying inverse ANTs transform to lesion map...")
             self.run_command([
                 "antsApplyTransforms",
                 "-d", "3",
@@ -305,7 +306,7 @@ class MSXplainReport:
 
             return output_path
         except Exception as e:
-            print(f"Error inverse transforming lesion map with ANTs: {e}")
+            logging.error(f"Error inverse transforming lesion map with ANTs: {e}")
             traceback.print_exc()
             return None
     
@@ -350,7 +351,7 @@ class MSXplainReport:
             return True
         
         except Exception as e:
-            print(f"Error in registering lesion map: {str(e)}")
+            logging.error(f"Error in registering lesion map: {str(e)}")
             traceback.print_exc()
             return None
 
@@ -373,7 +374,7 @@ class MSXplainReport:
         )
         
         # Run SAMSEG processing
-        print("Running SAMSEG processing...")
+        logging.info("Running SAMSEG ...")
         
         run_samseg_processing(
             patient_dir=self.output_dir,
@@ -423,11 +424,17 @@ class MSXplainReport:
                          regex='desc-\w+',
                          rtstruct_converter='dcmrtstruct2nii',
                          precision=5,)
-
-        myseg.write_seg(p=Path(self.output_dir),
-                        base_name=out_basename,
-                        mode='dcmseg',
-                        no_overlap = 'enforce',
-                        p_ref=dcm_ref
-                        )
+        
+        logging.info("Writing DCM-SEG file...")
+        logging.disable(logging.CRITICAL)
+        try:
+            myseg.write_seg(p=Path(self.output_dir),
+                            base_name=out_basename,
+                            mode='dcmseg',
+                            no_overlap = 'enforce',
+                            p_ref=dcm_ref
+                            )
+        finally:
+            logging.disable(logging.NOTSET)
+        
         return True

@@ -3,12 +3,6 @@ import requests
 import pydicom
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 
 def find_dicom_files(base_folder: str) -> list:
     """Find all DICOM files recursively"""
@@ -38,8 +32,6 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
         bool: True if successful, False otherwise
     """
     try:
-        logger.info(f"Checking for existing segmentations for patient: {patient_id}, study: {study_uid}")
-        
         # Search for patient in Orthanc
         search_url = f"{orthanc_url}/tools/find"
         query = {
@@ -53,13 +45,13 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
         response = requests.post(search_url, json=query)
         
         if response.status_code != 200:
-            logger.warning(f"Failed to query Orthanc: {response.status_code}")
+            logging.warning(f"Failed to query Orthanc: {response.status_code}")
             return False
         
         patients = response.json()
         
         if not patients:
-            logger.info(f"No existing patient found in Orthanc for: {patient_id}")
+            logging.info(f"No existing patient found in Orthanc for: {patient_id}")
             return True
         
         deleted_count = 0
@@ -77,10 +69,8 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                 
                 # Only process segmentations from the SAME study/session
                 if study_instance_uid != study_uid:
-                    logger.debug(f"Skipping study {study_uid_orthanc} - different session")
+                    logging.debug(f"Skipping study {study_uid_orthanc} - different session")
                     continue
-                
-                logger.info(f"Found matching study/session: {study_uid_orthanc}")
                 
                 # Get all series in this study
                 for series_uid in study_data.get('Series', []):
@@ -100,8 +90,7 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                     )
                     
                     if is_segmentation:
-                        logger.info(f"Found existing segmentation series: {series_uid}")
-                        logger.info(f"  Modality: {modality}, Description: {series_desc}")
+                        logging.info(f"Found existing segmentation series: {series_uid}")
                         
                         # Delete this series
                         delete_url = f"{orthanc_url}/series/{series_uid}"
@@ -109,19 +98,19 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                         
                         if delete_response.status_code == 200:
                             deleted_count += 1
-                            logger.info(f"✓ Deleted existing segmentation: {series_uid}")
+                            logging.info(f"Deleted existing segmentation: {series_uid}")
                         else:
-                            logger.warning(f"✗ Failed to delete segmentation: {delete_response.status_code}")
+                            logging.warning(f"Failed to delete segmentation: {delete_response.status_code}")
         
         if deleted_count > 0:
-            logger.info(f"Deleted {deleted_count} existing segmentation(s)")
+            logging.info(f"Deleted {deleted_count} existing segmentation(s)")
         else:
-            logger.info("No existing segmentations found to delete")
+            logging.info("No existing segmentations found to delete")
         
         return True
         
     except Exception as e:
-        logger.error(f"Error deleting existing segmentations: {e}")
+        logging.error(f"Error deleting existing segmentations: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -137,23 +126,22 @@ def upload_to_orthanc(base_folder: str) -> None:
         response = requests.get(f"{orthanc_url}/system")
         if response.status_code != 200:
             raise Exception("Orthanc server is not responding correctly")
-        logger.info("Successfully connected to Orthanc server")
+        logging.info("Successfully connected to Orthanc server")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Cannot connect to Orthanc server: {str(e)}")
+        logging.error(f"Cannot connect to Orthanc server: {str(e)}")
 
     # Convert to absolute path and check directory
     base_folder = os.path.abspath(base_folder)
-    logger.info(f"Scanning directory: {base_folder}")
     
     if not os.path.exists(base_folder):
-        logger.error(f"Directory not found: {base_folder}")
+        logging.error(f"Directory not found: {base_folder}")
 
     # Find all DICOM files
     dicom_files = find_dicom_files(base_folder)
     if not dicom_files:
-        logger.error("No DICOM files found")
+        logging.error("No DICOM files found")
     
-    logger.info(f"Found {len(dicom_files)} DICOM files to upload")
+    logging.info(f"Found {len(dicom_files)} DICOM files to upload")
     
     # Check if we're uploading segmentations - only delete existing ones if so
     patient_id = None
@@ -180,18 +168,17 @@ def upload_to_orthanc(base_folder: str) -> None:
                 continue
         
         if patient_id and study_uid:
-            logger.info(f"Detected Patient ID: {patient_id}, Study UID: {study_uid}")
+            logging.info(f"Detected Patient ID: {patient_id}, Study UID: {study_uid}")
             
             # Only delete existing segmentations if we're uploading new segmentations
             if contains_segmentations:
-                logger.info("Uploading new segmentations - will delete existing ones from THIS session only")
+                logging.info("Uploading new segmentations")
                 delete_existing_segmentations(patient_id, study_uid, orthanc_url)
-            else:
-                logger.info("Not uploading segmentations - keeping all existing segmentations")
+
         else:
-            logger.warning(f"Missing Patient ID or Study UID in DICOM files (Patient ID: {patient_id}, Study UID: {study_uid})")
+            logging.warning(f"Missing Patient ID or Study UID in DICOM files (Patient ID: {patient_id}, Study UID: {study_uid})")
     except Exception as e:
-        logger.warning(f"Could not extract Patient ID or Study UID: {e}")
+        logging.warning(f"Could not extract Patient ID or Study UID: {e}")
     
     success_count = 0
     error_count = 0
@@ -210,12 +197,12 @@ def upload_to_orthanc(base_folder: str) -> None:
                 success_count += 1
             else:
                 error_count += 1
-                logger.error(f"Failed to upload {os.path.basename(file_path)}")
-                logger.error(f"Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logging.error(f"Failed to upload {os.path.basename(file_path)}")
+                logging.error(f"Status code: {response.status_code}")
+                logging.error(f"Response: {response.text}")
                 
         except Exception as e:
             error_count += 1
-            logger.error(f"Error processing {file_path}: {str(e)}")
+            logging.error(f"Error processing {file_path}: {str(e)}")
 
-    logger.info(f"Upload completed. Success: {success_count}, Errors: {error_count}")
+    logging.info(f"Upload completed. Success: {success_count}, Errors: {error_count}")

@@ -2,6 +2,7 @@ import traceback
 import os
 from pathlib import Path
 from datetime import datetime
+import time
 from fastapi import FastAPI, Response, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,6 +19,19 @@ from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
 from fastapi.background import BackgroundTasks
 from concurrent.futures import ThreadPoolExecutor
+import logging
+
+# Configure logging at application startup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+def format_elapsed_time(elapsed_seconds):
+    """Format elapsed time as hours, minutes, seconds"""
+    hours, remainder = divmod(elapsed_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
 
 app = FastAPI()
 
@@ -79,7 +93,7 @@ async def get_report(run_id: str, patient_name: str, session: str):
         # Construct the correct file path using run_id and session
         file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session, f"report_{patient_name}_{session}.xlsx")
         
-        print(f"Looking for report at: {file_path}")
+        logging.debug(f"Looking for report at: {file_path}")
         
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Report file not found: {file_path}")
@@ -127,7 +141,7 @@ async def get_report(run_id: str, patient_name: str, session: str):
             else:
                 patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
         except Exception as e:
-            print(f"Error reading DICOM metadata: {str(e)}")
+            logging.error(f"Error reading DICOM metadata: {str(e)}")
             patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
 
         # Get StudyInstanceUID from Orthanc for this patient
@@ -152,19 +166,19 @@ async def get_report(run_id: str, patient_name: str, session: str):
             
             if search_response.status_code == 200:
                 studies = search_response.json()
-                print(f"Found {len(studies)} studies for patient {patient_id}")
+                logging.info(f"Found {len(studies)} studies for patient {patient_id}")
                 if studies:
                     # Get the StudyInstanceUID from the first study
                     # The response is a list of study resources with full details
                     first_study = studies[0]
                     study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
-                    print(f"StudyInstanceUID: {study_instance_uid}")
+                    logging.info(f"StudyInstanceUID: {study_instance_uid}")
                 else:
-                    print(f"No studies found for patient {patient_id}")
+                    logging.warning(f"No studies found for patient {patient_id}")
             else:
-                print(f"Failed to query Orthanc: {search_response.status_code}")
+                logging.error(f"Failed to query Orthanc: {search_response.status_code}")
         except Exception as e:
-            print(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
+            logging.error(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
             import traceback
             traceback.print_exc()
         
@@ -197,7 +211,7 @@ async def get_report(run_id: str, patient_name: str, session: str):
         }
         return report_data
     except Exception as e:
-        print(f"Error generating report: {str(e)}")
+        logging.error(f"Error generating report: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": "Error generating report"},
@@ -224,10 +238,10 @@ async def get_total_lesions(run_id: str, patient_name: str):
         # Get true lesions count (all lesions except false positives)
         true_lesions = len(report_df[report_df['Lesion Type'] != 'False Positive'])
         
-        print("Lesion counts from report:")
-        print(lesion_counts)
-        print(f"True lesions: {true_lesions}")
-        print(f"False positives: {false_positives}")
+        logging.debug("Lesion counts from report:")
+        logging.debug(lesion_counts)
+        logging.debug(f"True lesions: {true_lesions}")
+        logging.debug(f"False positives: {false_positives}")
         
         return {
             "total_lesions": len(report_df),
@@ -236,7 +250,7 @@ async def get_total_lesions(run_id: str, patient_name: str):
             "lesion_types": lesion_counts.to_dict()
         }
     except Exception as e:
-        print(f"Error getting lesion counts: {str(e)}")
+        logging.error(f"Error getting lesion counts: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": str(e)},
@@ -281,10 +295,10 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         lesion_slice = np.flip(np.rot90(lesion_slice), axis=1)
         brain_slice = np.flip(np.rot90(brain_slice), axis=1)
         
-        print(f"Slice {slice_num} information:")
-        print(f"  Shape after rotation: {lesion_slice.shape}")
-        print(f"  Lesion values: {np.unique(lesion_slice)}")
-        print(f"  Brain range: [{brain_slice.min()}, {brain_slice.max()}]")
+        logging.debug(f"Slice {slice_num} information:")
+        logging.debug(f"  Shape after rotation: {lesion_slice.shape}")
+        logging.debug(f"  Lesion values: {np.unique(lesion_slice)}")
+        logging.debug(f"  Brain range: [{brain_slice.min()}, {brain_slice.max()}]")
         
         # Define colors for each lesion type
         lesion_type_colors = {
@@ -312,8 +326,8 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         unique_lesions = unique_lesions[unique_lesions > 0.01]
         
         if len(unique_lesions) > 0:
-            print(f"Found {len(unique_lesions)} lesions in slice {slice_num}")
-            print(f"Show false positives mode: {show_false_positives}")
+            logging.debug(f"Found {len(unique_lesions)} lesions in slice {slice_num}")
+            logging.debug(f"Show false positives mode: {show_false_positives}")
             
             for lesion_value in unique_lesions:
                 # Find this lesion in the report using Lesion Index
@@ -327,12 +341,12 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
                     if show_false_positives:
                         # In false positive mode, only show false positives
                         if not is_false_positive:
-                            print(f"  Skipping non-false positive lesion {lesion_value}")
+                            logging.debug(f"  Skipping non-false positive lesion {lesion_value}")
                             continue
                     else:
                         # In normal mode, skip false positives
                         if is_false_positive:
-                            print(f"  Skipping false positive lesion {lesion_value}")
+                            logging.debug(f"  Skipping false positive lesion {lesion_value}")
                             continue
                     
                     # Create mask for this lesion
@@ -347,7 +361,7 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
                     # Apply color to the lesion
                     colored_slice[lesion_mask] = [*color, alpha]
                     
-                    print(f"  Showing lesion {lesion_value}: type={lesion_type}, is_false_positive={is_false_positive}")
+                    logging.debug(f"  Showing lesion {lesion_value}: type={lesion_type}, is_false_positive={is_false_positive}")
         
         # Convert to PIL Image and return
         slice_img = Image.fromarray(colored_slice, mode='RGBA')
@@ -368,7 +382,7 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         )
     
     except Exception as e:
-        print(f"Error processing slice: {str(e)}")
+        logging.error(f"Error processing slice: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": str(e)},
@@ -420,7 +434,7 @@ async def upload_dicoms(files: List[UploadFile] = File(...), run_id: str = None)
             status_code=200
         )
     except Exception as e:
-        print(f"Error in upload: {str(e)}")
+        logging.error(f"Error in upload: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": str(e)},
@@ -447,7 +461,7 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
                 'error': "No patient directories found"
             }, status_code=400)
         
-        print(f"Found {len(patient_dirs)} patient directories: {patient_dirs}")
+        logging.info(f"Found {len(patient_dirs)} patient directories: {patient_dirs}")
         
         # Initialize processing status
         processing_status[run_id] = {
@@ -475,7 +489,7 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
         })
         
     except Exception as e:
-        print(f"Error starting processing: {str(e)}")
+        logging.error(f"Error starting processing: {str(e)}")
         traceback.print_exc()
         return JSONResponse({
             'error': str(e)
@@ -484,7 +498,7 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
 def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
     """Process all patients sequentially with progress updates"""
     try:
-        print(f"\nStarting processing for run {run_id}...")
+        logging.info(f"Starting processing for run {run_id}...")
         global processing_status
 
         for i, patient_dir in enumerate(patient_dirs):
@@ -492,7 +506,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                 status = processing_status[run_id]['patients'][patient_dir]
                 status['status'] = 'processing'
                 
-                print(f"\n[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
+                logging.info(f"[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
                 
                 # Create thread pool for CPU-intensive tasks
                 with ThreadPoolExecutor(max_workers=12) as executor:
@@ -509,6 +523,9 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                         session_output_dir = os.path.join(patient_output_dir, session)
                         os.makedirs(session_output_dir, exist_ok=True)
                         try:
+                           
+                            # Start timing for this series
+                            series_start_time = time.time()
                            
                             # Find FLAIR and T1 directories
                             flair_dir, t1_dir = executor.submit(
@@ -535,6 +552,9 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.preprocess_images, nifti_files
                             ).result()
                             
+                            elapsed = time.time() - series_start_time
+                            logging.info(f"Preprocessing completed in {format_elapsed_time(elapsed)}")
+                            
                             status['steps']['preprocessing'] = 'completed'
 
                             # MSXplain step
@@ -558,6 +578,9 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
                             report_df.to_excel(report_path, index=False)
                             
+                            elapsed = time.time() - series_start_time
+                            logging.info(f"Report generation completed in {format_elapsed_time(elapsed)}")
+                            
                             # Register lesion_map to Flair original space
                             # lesion_map_flair_space = executor.submit(
                             #     msxplain.register_lesion_map_to_flair
@@ -574,7 +597,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
                             # Convert segmentation to DICOM-SEG
-                            print("Converting NIFTI label maps to DCM SEG...")
+                            logging.info("Converting NIFTI label maps to DCM SEG...")
                             dcmseg_flair = executor.submit(
                                 msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
                             ).result()
@@ -585,23 +608,26 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             
                             # Upload lesion map outputs(DCM SEG) to Orthanc
                             upload_to_orthanc(session_output_dir)
+                            
+                            elapsed = time.time() - series_start_time
+                            logging.info(f"Complete series processing finished in {format_elapsed_time(elapsed)}")
 
                         except Exception as e:
-                            print(f"Error processing session {session} for patient {patient_dir}: {str(e)}")
+                            logging.error(f"Error processing session {session} for patient {patient_dir}: {str(e)}")
                             traceback.print_exc()
 
             except Exception as e:
-                print(f"Error processing patient {patient_dir}: {str(e)}")
+                logging.error(f"Error processing patient {patient_dir}: {str(e)}")
                 traceback.print_exc()
                 status['status'] = 'error'
                 for step in status['steps']:
                     if status['steps'][step] == 'processing':
                         status['steps'][step] = 'error'
 
-        print(f"\nAll processing completed for run {run_id}")
+        logging.info(f"All processing completed for run {run_id}")
         
     except Exception as e:
-        print(f"Error in process_all_patients: {str(e)}")
+        logging.error(f"Error in process_all_patients: {str(e)}")
         traceback.print_exc()
 
 def find_input_directories(patient_path):
@@ -627,7 +653,7 @@ def find_input_directories(patient_path):
 @app.get("/api/process-status/{run_id}")
 async def get_process_status(run_id: str):
     try:
-        print(f"Getting status for run: {run_id}")
+        logging.debug(f"Getting status for run: {run_id}")
         
         # Check if any processing is active
         if not processing_status:
@@ -676,7 +702,7 @@ async def get_process_status(run_id: str):
         })
 
     except Exception as e:
-        print(f"Error getting process status: {str(e)}")
+        logging.error(f"Error getting process status: {str(e)}")
         traceback.print_exc()
         return JSONResponse({
             'error': str(e),
@@ -754,7 +780,7 @@ async def get_processed_runs():
         return runs
         
     except Exception as e:
-        print(f"Error getting processed runs: {str(e)}")
+        logging.error(f"Error getting processed runs: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
             content={"error": str(e)},
