@@ -16,14 +16,12 @@ def run_samseg_processing(patient_dir, t1_path, pred_path):
         samseg_dir = os.path.join(patient_dir, "SYNTHSEG")
         os.makedirs(samseg_dir, exist_ok=True)
         
-        # Detect GPU availability
-        try:
-            import torch
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"WMH-SynthSeg will use device: {device}")
-        except ImportError:
-            device = "cpu"
-            print("PyTorch not available, using CPU")
+        # Use CPU to avoid GPU OOM errors and dimension mismatches from --crop flag
+        # The --crop flag (needed for GPU) creates smaller output images that don't 
+        # match dimensions with pred.nii.gz, causing fslmaths multiplication errors
+        device = "cpu"
+        print(f"WMH-SynthSeg will use device: {device}")
+        print("Using CPU to ensure output dimensions match and avoid memory issues")
         
         # Run WMH-SynthSeg segmentation
         print("Running WMH-SynthSeg segmentation...")
