@@ -524,7 +524,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                         os.makedirs(session_output_dir, exist_ok=True)
                         try:
                            
-                            # Start timing for this series
+                            # Start timing
                             series_start_time = time.time()
                            
                             # Find FLAIR and T1 directories
@@ -558,6 +558,10 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             status['steps']['preprocessing'] = 'completed'
 
                             # MSXplain step
+                            
+                            # Start timing
+                            pipeline_start_time = time.time()
+                            
                             status['steps']['msxplain'] = 'processing'
                             prediction_file = executor.submit(
                                 msxplain.run_msxplain, preprocessed_files
@@ -578,8 +582,8 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
                             report_df.to_excel(report_path, index=False)
                             
-                            elapsed = time.time() - series_start_time
-                            logging.info(f"Report generation completed in {format_elapsed_time(elapsed)}")
+                            elapsed = time.time() - pipeline_start_time
+                            logging.info(f"MSXplain pipeline and report generation completed in {format_elapsed_time(elapsed)}")
                             
                             # Register lesion_map to Flair original space
                             # lesion_map_flair_space = executor.submit(

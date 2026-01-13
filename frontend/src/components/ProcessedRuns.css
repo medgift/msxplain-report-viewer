@@ -111,15 +111,37 @@
 .view-report-button {
   margin-top: 10px;
   padding: 8px 16px;
-  background-color: #28a745;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  transition: background-color 0.3s ease;
+  font-weight: 500;
 }
 
-.view-report-button:hover {
-  background-color: #218838;
+.view-report-button.report-available {
+  background-color: #28a745 !important;
+}
+
+.view-report-button.report-available:hover:not(:disabled) {
+  background-color: #218838 !important;
+}
+
+.view-report-button.report-pending {
+  background-color: #dc3545 !important;
+  cursor: not-allowed;
+}
+
+.view-report-button.report-pending:hover {
+  background-color: #c82333 !important;
+}
+
+.view-report-button:disabled {
+  opacity: 1;
+}
+
+.view-report-button:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 .error-message {
