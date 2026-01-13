@@ -7,15 +7,11 @@ import pandas as pd
 import itertools
 from pydicom import dcmread
 import pydicom_seg
-from palettable.tableau import tableau
 import pydicom
 
 from .helpers import get_segment, intersection_bin_mask, get_boolean_masks_from_seg, get_metadata_from_seg, \
     read_image_files, match_size, DcmRtstruct2NiiWrapper
 from .labels import Labels
-
-# Get color palette
-# colormap = tableau.get_map("Tableau_20")
 
 
 
