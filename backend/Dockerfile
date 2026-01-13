@@ -36,8 +36,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Build dcm2niix from source with JPEG 2000 and JPEG-LS support
-RUN git clone --depth 1 --branch v1.0.20241208 https://github.com/rordenlab/dcm2niix.git /tmp/dcm2niix && \
+# Using commit SHA for v1.0.20250506 to ensure immutable, reproducible builds
+RUN git clone https://github.com/rordenlab/dcm2niix.git /tmp/dcm2niix && \
     cd /tmp/dcm2niix && \
+    git checkout f6d7a00 && \
     mkdir build && cd build && \
     cmake -DUSE_OPENJPEG=ON -DUSE_JPEGLS=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
     make && make install && \
