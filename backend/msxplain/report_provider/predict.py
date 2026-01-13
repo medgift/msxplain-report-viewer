@@ -33,15 +33,12 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         
         # Override CUDA availability if requested
         if force_cuda:
-            print("Running MS Lesion Prediction IN CUDA")
+            logging.info("Running MS Lesion Prediction IN CUDA")
             torch.cuda.is_available = lambda : True
         else:
-            print("Running MS Lesion Prediction IN CPU")
+            logging.info("Running MS Lesion Prediction IN CPU")
             torch.cuda.is_available = lambda : False
         
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
-        print("total devices", torch.cuda.device_count())
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f"Using device: {device}")
         torch.multiprocessing.set_sharing_strategy('file_system')
@@ -52,7 +49,6 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         seed = 1
         
         # Initialize model
-        print("Initializing model...")
         model = UNet(
             spatial_dims=3,
             in_channels=len(input_modalities),
@@ -69,7 +65,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
                 torch.nn.init.xavier_normal_(layer.weight, gain=1.0)
         
         # Load model weights
-        print(f"Loading model weights from {model_checkpoint}")
+        logging.info(f"Loading model weights from {model_checkpoint}")
         if torch.cuda.is_available():
             model.load_state_dict(torch.load(model_checkpoint, map_location='cuda'))
         else:
@@ -87,7 +83,6 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         )
         
         # Prepare dataset
-        print("Preparing dataset...")
         val_transforms = get_valnotarget_transforms(input_keys=input_modalities).set_random_state(seed=seed)
         val_dataset = NiftinotargetDataset(
             input_paths=input_val_paths,
@@ -109,7 +104,6 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         
         # Process each batch
         for i, data in enumerate(val_loader):
-            print("Available keys in data:", data.keys())  # Debug print
             
             # Use the first input file for affine information
             input_file = os.path.join(input_val_paths[0], input_prefixes[0])
@@ -138,19 +132,12 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
             
             pred_path = samseg_dir / "pred.nii.gz"
             nib.save(pred, pred_path)
-            print(f"Prediction saved to {pred_path}")
-        
-        # Report timing
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        hours, remainder = divmod(elapsed_time, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        print(f"======= Elapsed time: {int(hours)} hours, {int(minutes)} minutes, {seconds:.2f} seconds")
+            logging.info(f"Prediction saved to {pred_path}")
         
         return str(pred_path)
         
     except Exception as e:
-        print(f"Error in prediction: {str(e)}")
+        logging.error(f"Error in prediction: {str(e)}")
         traceback.print_exc()
         raise
 
