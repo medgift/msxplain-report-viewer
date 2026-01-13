@@ -8,6 +8,7 @@ Example: python lesion_information.py report ID SMSC/PRLectrims/4031-5900/2021-1
 python lesion_information.py report ID SMSC/PRLectrims/4031-5900/2021-1224/flair_3d_sbr.nii.gz SAMSEG/pred.nii.gz SAMSEG
 
 '''
+import logging
 import os
 import nibabel as nib
 import numpy as np
@@ -21,7 +22,7 @@ import traceback
 
 def check_image_existence(file_path):
     if not os.path.isfile(file_path):
-        print(file_path)
+        logging.debug(file_path)
         raise FileNotFoundError(f"The {os.path.basename(file_path)} does not exist")
 
 
@@ -36,7 +37,7 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         save_each_subject (bool): Whether to save individual subject reports
     """
     try:
-        print(f"Generating report for subject {patient_id}...")
+        logging.info(f"Generating report for subject {patient_id}...")
         
         # Check files exist
         check_image_existence(flair_path)
@@ -140,6 +141,6 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         return df
         
     except Exception as e:
-        print(f"Error generating lesion report: {str(e)}")
+        logging.error(f"Error generating lesion report: {str(e)}")
         traceback.print_exc()
         raise
