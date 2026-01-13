@@ -92,10 +92,13 @@ const ProcessedRuns = () => {
                         </span>
                         <button
                           onClick={() => handleViewReport(run.id, patient.id, session)}
-                          className={`view-report-button ${session.status.toLowerCase()}`}
-                          disabled={session.status !== 'Complete'}
+                          className={`view-report-button ${session.status.toLowerCase()} ${
+                            session.report ? 'report-available' : 'report-pending'
+                          }`}
+                          disabled={!session.report || session.status !== 'Complete'}
+                          title={session.report ? 'Click to view report' : 'Report not available'}
                         >
-                          View Report
+                          {session.report ? 'View Report' : 'No Report'}
                         </button>
                       </div>
                     ))}

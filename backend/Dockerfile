@@ -30,10 +30,19 @@ RUN apt-get update && apt-get install -y \
     libhdf5-dev \
     libhdf5-cpp-103 \
     libhdf5-103 \
+    libopenjp2-7-dev \
+    libcharls-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dcm2niix
-RUN apt-get update && apt-get install -y dcm2niix && rm -rf /var/lib/apt/lists/*
+# Build dcm2niix from source with JPEG 2000 and JPEG-LS support
+# Using commit SHA for v1.0.20250506 to ensure immutable, reproducible builds
+RUN git clone https://github.com/rordenlab/dcm2niix.git /tmp/dcm2niix && \
+    cd /tmp/dcm2niix && \
+    git checkout f6d7a00 && \
+    mkdir build && cd build && \
+    cmake -DUSE_OPENJPEG=ON -DUSE_JPEGLS=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && make install && \
+    cd / && rm -rf /tmp/dcm2niix
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
