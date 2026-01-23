@@ -10,6 +10,7 @@ import SimpleITK as sitk
 import torch
 import pandas as pd
 import logging
+from contextlib import contextmanager
 from .report_provider.predict import predict_msxplain
 from .report_provider.parcellation_processing import run_parcellation
 from .report_provider.lesion_information import generate_lesion_report
@@ -17,6 +18,17 @@ from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def suppress_logging(level=logging.CRITICAL):
+    """Context manager to temporarily suppress logging"""
+    previous_level = logging.root.level
+    logging.root.setLevel(level)
+    try:
+        yield
+    finally:
+        logging.root.setLevel(previous_level)
 
 
 # def load_config():
@@ -413,15 +425,10 @@ class MSXplainReport:
                          precision=5,)
         
         logger.info("Writing DCM-SEG file...")
-        logging.disable(logging.CRITICAL)
-        try:
+        with suppress_logging():
             myseg.write_seg(p=Path(self.output_dir),
                             base_name=out_basename,
                             mode='dcmseg',
                             no_overlap = 'enforce',
                             p_ref=dcm_ref
                             )
-        finally:
-            logging.disable(logging.NOTSET)
-        
-        return True

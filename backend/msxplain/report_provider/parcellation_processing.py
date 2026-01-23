@@ -5,14 +5,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def run_parcellation(t1_path, pred_path, parcellation_dir):
-    """Run WMH-SynthSeg processing pipeline (replaces SAMSEG with WMH-SynthSeg)
+def run_parcellation(t1_path, pred_path, parcellation_dir, device="cpu"):
+    """Run parcellation processing to create structure masks
     
     Args:
         t1_path (str): Path to T1 image
         pred_path (str): Path to prediction mask
         parcellation_dir (str): Path to parcellation directory
+        device (str): Device to use for computation ('cpu' or 'cuda'). Defaults to 'cpu'.
     """
+    
+    # Validate input file paths early to provide clear error messages
+    if not os.path.exists(t1_path):
+        raise FileNotFoundError(f"T1 image not found at path: {t1_path}")
+    if not os.path.exists(pred_path):
+        raise FileNotFoundError(f"Prediction mask not found at path: {pred_path}")
 
     try:
         
@@ -20,7 +27,7 @@ def run_parcellation(t1_path, pred_path, parcellation_dir):
         # The --crop flag (needed for GPU) creates smaller output images that don't 
         # match dimensions with pred.nii.gz, causing fslmaths multiplication errors
 
-        seg_path = run_wmh_synthseg(t1_path, parcellation_dir)
+        seg_path = run_wmh_synthseg(t1_path, parcellation_dir, device=device)
         
         # Create individual structure masks
         logger.info("Creating structure masks...")
@@ -181,7 +188,7 @@ def run_parcellation(t1_path, pred_path, parcellation_dir):
         raise 
     
 def run_wmh_synthseg(t1_path, parcellation_dir, device="cpu"):
-    """Run WMH-SynthSeg processing pipeline (replaces SAMSEG with WMH-SynthSeg)
+    """Run WMH-SynthSeg processing pipeline
     
     Args:
         t1_path (str): Path to T1 image before bias correction and skull stripping
@@ -209,7 +216,12 @@ def run_wmh_synthseg(t1_path, parcellation_dir, device="cpu"):
         ],
                         capture_output=True,
                         text=True,
-                        check=False)
+                        check=True)
+        
+        # Verify output file was created
+        if not os.path.exists(seg_path):
+            raise FileNotFoundError(f"WMH-SynthSeg failed to create output file: {seg_path}")
+        
         logger.info(f"Segmentation file created successfully: {seg_path}")
         
         return seg_path
@@ -246,7 +258,11 @@ def run_samseg(t1_path, parcellation_dir, device="cpu"):
         ],
                         capture_output=True,
                         text=True,
-                        check=False)
+                        check=True)
+        
+        # Verify output file was created
+        if not os.path.exists(seg_path):
+            raise FileNotFoundError(f"SAMSEG failed to create output file: {seg_path}")
 
         logger.info(f"Segmentation file created successfully: {seg_path}")
         
