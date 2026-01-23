@@ -10,11 +10,25 @@ import SimpleITK as sitk
 import torch
 import pandas as pd
 import logging
+from contextlib import contextmanager
 from .report_provider.predict import predict_msxplain
-from .report_provider.samseg_processing import run_samseg_processing
+from .report_provider.parcellation_processing import run_parcellation
 from .report_provider.lesion_information import generate_lesion_report
 from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def suppress_logging(level=logging.CRITICAL):
+    """Context manager to temporarily suppress logging"""
+    previous_level = logging.root.level
+    logging.root.setLevel(level)
+    try:
+        yield
+    finally:
+        logging.root.setLevel(previous_level)
 
 
 # def load_config():
@@ -95,9 +109,11 @@ class MSXplainReport:
         
         # Don't append patient_id here since output_dir already includes it
         self.output_dir = output_dir
+        self.parcellation_dir = os.path.join(self.output_dir, "SYNTHSEG")
         
         # Create output directories
         os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.parcellation_dir, exist_ok=True)
         
         # Path to MSXplain resources
         self.msxplain_dir = Path(__file__).parent.absolute()
@@ -133,11 +149,11 @@ class MSXplainReport:
             # Clean the ID to be filesystem-friendly
             patient_id = ''.join(c for c in patient_id if c.isalnum() or c in '_-')
             
-            logging.info(f"Using Patient ID: {patient_id}")
+            logger.info(f"Using Patient ID: {patient_id}")
             return patient_id
             
         except Exception as e:
-            logging.error(f"Error getting patient ID: {str(e)}")
+            logger.error(f"Error getting patient ID: {str(e)}")
             traceback.print_exc()
             # Fallback to timestamp if there's an error
             return f"PATIENT_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -159,13 +175,13 @@ class MSXplainReport:
                 
             return stdout
         except Exception as e:
-            logging.error(f"Error running command {' '.join(command)}: {str(e)}")
+            logger.error(f"Error running command {' '.join(command)}: {str(e)}")
             traceback.print_exc()
             raise
 
     def convert_dicoms_to_nifti(self):
         """Convert DICOM series to NIFTI format"""
-        logging.info("Converting DICOM series to NIFTI...")
+        logger.info("Converting DICOM series to NIFTI...")
         
         # Convert FLAIR
         flair_command = [
@@ -195,8 +211,7 @@ class MSXplainReport:
 
     def preprocess_images(self, nifti_files):
         """Run preprocessing steps on NIFTI files"""
-
-        logging.info("Running FSL orientation...")
+        logger.info("Running FSL orientation...")
         
         # FSL orientation steps
         for img_path in [nifti_files['flair'], nifti_files['t1']]:
@@ -204,7 +219,7 @@ class MSXplainReport:
             self.run_command(["fslreorient2std", img_path])
         
         # N4 Bias field correction
-        logging.info("Running N4 Bias field correction...")
+        logger.info("Running N4 Bias field correction...")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[img_type]
@@ -218,10 +233,10 @@ class MSXplainReport:
             
         
         # Brain extraction
-        logging.info("Running Brain extraction...")
+        logger.info("Running Brain extraction...")
         
         device = "0" if torch.cuda.is_available() else "cpu"
-        logging.info(f"HD-BET will use device: {device}")
+        logger.info(f"HD-BET will use device: {device}")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[f"{img_type}_n4"]
@@ -235,20 +250,9 @@ class MSXplainReport:
                 "-tta", "0"
             ])
             nifti_files[f"{img_type}_brain"] = output_path
-        
-        # # Elastix registration
-        # print("Running Elastix registration...")
-        
-        # self.run_command([
-        #     "elastix",
-        #     "-f", nifti_files['t1_brain'],  # fixed image (T1)
-        #     "-m", nifti_files['flair_brain'],  # moving image (FLAIR)
-        #     "-out", reg_dir,
-        #     "-p", self.registration_params
-        # ])
 
         # ANTs registration as alternative/verification
-        logging.info("Running ANTs registration...")
+        logger.info("Running ANTs registration...")
         reg_dir = os.path.join(self.output_dir, "registration")
         os.makedirs(reg_dir, exist_ok=True)
         
@@ -293,7 +297,7 @@ class MSXplainReport:
             # Using [transform, 1] applies the inverse of the transform
             output_path = os.path.join(self.output_dir, "lesion_map_flair_space_ants.nii.gz")
             
-            logging.info("Applying inverse ANTs transform to lesion map...")
+            logger.info("Applying inverse ANTs transform to lesion map...")
             self.run_command([
                 "antsApplyTransforms",
                 "-d", "3",
@@ -306,7 +310,7 @@ class MSXplainReport:
 
             return output_path
         except Exception as e:
-            logging.error(f"Error inverse transforming lesion map with ANTs: {e}")
+            logger.error(f"Error inverse transforming lesion map with ANTs: {e}")
             traceback.print_exc()
             return None
     
@@ -351,35 +355,30 @@ class MSXplainReport:
             return True
         
         except Exception as e:
-            logging.error(f"Error in registering lesion map: {str(e)}")
+            logger.error(f"Error in registering lesion map: {str(e)}")
             traceback.print_exc()
             return None
 
     def run_msxplain(self, nifti_files):
         """Run MSXplain prediction and processing"""
         
-        # Create SAMSEG directory
-        samseg_dir = os.path.join(self.output_dir, "SAMSEG")
-        os.makedirs(samseg_dir, exist_ok=True)
-        
         # Run prediction with CUDA override
         prediction_file = predict_msxplain(
             input_val_paths=[self.output_dir, self.output_dir],  # Duplicate path for both inputs
             input_prefixes=["flair_registered.nii.gz", "t1_brain.nii.gz"],  # Two input files
             model_checkpoint=self.model_checkpoint,
+            parcellation_dir=self.parcellation_dir,
             num_workers=0,
             cache_rate=0.1,
             threshold=0.3,
             force_cuda=True
         )
         
-        # Run SAMSEG processing
-        logging.info("Running SAMSEG ...")
-        
-        run_samseg_processing(
-            patient_dir=self.output_dir,
-            t1_path=os.path.join(self.output_dir, "t1_brain.nii.gz"),
-            pred_path=prediction_file
+        # Run Parcellation processing
+        run_parcellation(
+            t1_path=os.path.join(self.output_dir, "t1.nii.gz"),
+            pred_path=prediction_file,
+            parcellation_dir=self.parcellation_dir
         )
         
         with torch.no_grad():
@@ -394,7 +393,7 @@ class MSXplainReport:
             patient_id=self.patient_id,
             flair_path=os.path.join(self.output_dir, "flair_registered.nii.gz"),
             pred_path=prediction_file,
-            samseg_path=os.path.join(self.output_dir, "SAMSEG")
+            parcellation_path=self.parcellation_dir
         )
         
         return report_df
@@ -425,16 +424,11 @@ class MSXplainReport:
                          rtstruct_converter='dcmrtstruct2nii',
                          precision=5,)
         
-        logging.info("Writing DCM-SEG file...")
-        logging.disable(logging.CRITICAL)
-        try:
+        logger.info("Writing DCM-SEG file...")
+        with suppress_logging():
             myseg.write_seg(p=Path(self.output_dir),
                             base_name=out_basename,
                             mode='dcmseg',
                             no_overlap = 'enforce',
                             p_ref=dcm_ref
                             )
-        finally:
-            logging.disable(logging.NOTSET)
-        
-        return True

@@ -23,6 +23,7 @@ SimpleITK==2.4.1
 HD-BET==1.1
 dcmrtstruct2nii==5
 PyYAML==6.0.2
+h5py==3.8.0
 # Additional important packages from your environment
 scikit-image==0.21.0
 opencv-python==4.11.0.86

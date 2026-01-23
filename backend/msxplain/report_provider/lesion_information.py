@@ -19,25 +19,26 @@ import scipy.ndimage as ndimage
 from .lesion_extraction import get_lesion_types_masks
 import traceback
 
+logger = logging.getLogger(__name__)
 
 def check_image_existence(file_path):
     if not os.path.isfile(file_path):
-        logging.debug(file_path)
+        logger.debug(file_path)
         raise FileNotFoundError(f"The {os.path.basename(file_path)} does not exist")
 
 
-def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
+def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path):
     """Generate lesion information report for a specific patient
     
     Args:
         patient_id (str): Patient identifier
         flair_path (str): Path to FLAIR image
         pred_path (str): Path to prediction mask
-        samseg_path (str): Path to SAMSEG directory
+        parcellation_path (str): Path to parcellation directory
         save_each_subject (bool): Whether to save individual subject reports
     """
     try:
-        logging.info(f"Generating report for subject {patient_id}...")
+        logger.info(f"Generating report for subject {patient_id}...")
         
         # Check files exist
         check_image_existence(flair_path)
@@ -80,10 +81,10 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         nib.save(lesion_map, image_path.parent / "lesion_map.nii.gz")
 
         # Load segmentation masks
-        seg_cortex_undil = nib.load(os.path.join(samseg_path, 'Cortex.nii.gz')).get_fdata()
-        seg_infratentorial_undil = nib.load(os.path.join(samseg_path, 'Infratentorial.nii.gz')).get_fdata()
-        seg_ventricles_undil = nib.load(os.path.join(samseg_path, 'Ventricles.nii.gz')).get_fdata()
-        seg_wm_undil = nib.load(os.path.join(samseg_path, 'WM_Mask.nii.gz')).get_fdata()
+        seg_cortex_undil = nib.load(os.path.join(parcellation_path, 'Cortex.nii.gz')).get_fdata()
+        seg_infratentorial_undil = nib.load(os.path.join(parcellation_path, 'Infratentorial.nii.gz')).get_fdata()
+        seg_ventricles_undil = nib.load(os.path.join(parcellation_path, 'Ventricles.nii.gz')).get_fdata()
+        seg_wm_undil = nib.load(os.path.join(parcellation_path, 'WM_Mask.nii.gz')).get_fdata()
 
         # Define dilation structure
         struct1 = ndimage.generate_binary_structure(3, 1)
@@ -141,6 +142,6 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         return df
         
     except Exception as e:
-        logging.error(f"Error generating lesion report: {str(e)}")
+        logger.error(f"Error generating lesion report: {str(e)}")
         traceback.print_exc()
         raise
