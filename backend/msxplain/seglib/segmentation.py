@@ -8,10 +8,11 @@ import itertools
 from pydicom import dcmread
 import pydicom_seg
 import pydicom
-
 from .helpers import get_segment, intersection_bin_mask, get_boolean_masks_from_seg, get_metadata_from_seg, \
     read_image_files, match_size, DcmRtstruct2NiiWrapper
 from .labels import Labels
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -64,7 +65,7 @@ class Segmentation():
             self.init_type = 'from_folder'
             self._init_mask_folder(p_seg, mask_glob, regex, force_inconsistent_masks=force_inconsistent_masks, p_seg_ref=p_seg_ref)
         else:
-            logging.warning(f"Unexpected input '{p_seg}'; expect path to segmentation files or folder")
+            logger.warning(f"Unexpected input '{p_seg}'; expect path to segmentation files or folder")
         # align labels / seg
         self._align_labels_with_seg()
 
@@ -77,7 +78,7 @@ class Segmentation():
             val = ds[field_name].value
             return val
         else:
-            logging.fatal(f"Field '{field_name}' not present in DCM header '{p}'")
+            logger.fatal(f"Field '{field_name}' not present in DCM header '{p}'")
 
     def _align_labels_with_seg(self):
         rois_in_seg     = self.get_roi_ids()
@@ -85,12 +86,12 @@ class Segmentation():
         rois_in_seg_not_labels = [roi for roi in rois_in_seg if not roi in rois_in_labels]
         rois_in_labels_not_seg = [roi for roi in rois_in_labels if not roi in rois_in_seg]
         if len(rois_in_seg_not_labels)>0:
-            logging.warning(f"ROIs {rois_in_seg_not_labels} are not present in label file. Will assign 'ROI-<ID>' as name")
+            logger.warning(f"ROIs {rois_in_seg_not_labels} are not present in label file. Will assign 'ROI-<ID>' as name")
             for roi in rois_in_seg_not_labels:
                 name = f"roi-{roi}"
                 self.labels.add_roi(name=name, roi_id=roi, abbreviation=name)
         if len(rois_in_labels_not_seg)>0:
-            logging.warning(f"ROIs {rois_in_labels_not_seg} in label file are not present in segmentations. Will remove from labels")
+            logger.warning(f"ROIs {rois_in_labels_not_seg} in label file are not present in segmentations. Will remove from labels")
             for roi in rois_in_labels_not_seg:
                 self.labels.remove_roi_id(roi)
 
@@ -99,7 +100,7 @@ class Segmentation():
 
         if (p is None) and use_p_dcm_ref and hasattr(self, 'p_dcm_ref'):
             p = self.p_dcm_ref
-            logging.debug(f"Using 'p_dcm_ref' {p} as reference file for output orientation")
+            logger.debug(f"Using 'p_dcm_ref' {p} as reference file for output orientation")
 
         if p is not None:
             p = Path(p)
@@ -107,15 +108,15 @@ class Segmentation():
                 sitk_img = read_image_files(p)
                 self.set_target_orientation(sitk_img.GetDirection())
             else:
-                logging.warning(f"Reference file {p} does not exist")
-        logging.debug(f"No reference file for target orientation")
+                logger.warning(f"Reference file {p} does not exist")
+        logger.debug(f"No reference file for target orientation")
         return orientation
 
     def set_target_orientation(self, direction):
         if  direction is not None:
             orientation_filter = sitk.DICOMOrientImageFilter()
             target_orientation = orientation_filter.GetOrientationFromDirectionCosines(direction)
-            logging.info(f"Setting target orientation to '{target_orientation}'")
+            logger.info(f"Setting target orientation to '{target_orientation}'")
             self.target_orientation = target_orientation
 
     def _has_labels(self):
@@ -145,7 +146,7 @@ class Segmentation():
         :param p_dcm_seg: path to DCM-SEG file
         :return: None
         """
-        logging.info(f"Initialization from DCM SEG file: {p_dcm_seg}")
+        logger.info(f"Initialization from DCM SEG file: {p_dcm_seg}")
         # read DCM-SEG
         dcm_ds = pydicom.dcmread(p_dcm_seg.as_posix())
         # get sitk labelmap
@@ -164,7 +165,7 @@ class Segmentation():
                 mask_sitk = result.segment_image(roi_id)
                 self.add_roi(mask_sitk, roi=roi_id, name=name, abbreviation=abbr)
         else:
-            logging.warning(f"No ROIs found in DCM SEG file {p_dcm_seg}")
+            logger.warning(f"No ROIs found in DCM SEG file {p_dcm_seg}")
 
     @staticmethod
     def _get_metadata_from_dcm_seg_segment(segment):
@@ -189,7 +190,7 @@ class Segmentation():
         :param p_dcm_ref: path to folder with reference DICOM image files (required bz rt-utils)
         :return: None
         """
-        logging.info(f"Initialization from DCM RTSTRUCT file: {p_dcm_rtstruct}")
+        logger.info(f"Initialization from DCM RTSTRUCT file: {p_dcm_rtstruct}")
         # read RTSTRUCT
         wrapper = DcmRtstruct2NiiWrapper(p_rtstruct=p_dcm_rtstruct, p_dicom_img=p_dcm_ref, p_tmp=None)
         wrapper.convert()
@@ -205,17 +206,17 @@ class Segmentation():
             self.add_roi(mask_sitk, name=roi_name)
 
     def _init_bin_seg_file(self, p_segmentation_file):
-        logging.info(f"Initialization from (multi-label) segmentation file: {p_segmentation_file}")
+        logger.info(f"Initialization from (multi-label) segmentation file: {p_segmentation_file}")
         seg_sitk = read_image_files(p_segmentation_file)
         if not seg_sitk.GetPixelIDValue() == 1:
-            logging.warning(f"PixelType is {seg_sitk.GetPixelIDTypeAsString()} \n trying to convert to UnsignedInt")
+            logger.warning(f"PixelType is {seg_sitk.GetPixelIDTypeAsString()} \n trying to convert to UnsignedInt")
             seg_sitk = sitk.Cast(seg_sitk, sitk.sitkUInt8)
         results  = get_boolean_masks_from_seg(seg_sitk, roi_ids=None, background=0)
         self.meta_data = results['meta_data']
         self.binary_masks = results['binary_masks']
 
     def _init_ref_image(self, p_reference_image):
-        logging.info(f"Initialization of empty segmentation from reference image: {p_reference_image}")
+        logger.info(f"Initialization of empty segmentation from reference image: {p_reference_image}")
         ref_sitk = read_image_files(p_reference_image)
         meta_data = get_metadata_from_seg(ref_sitk)
         self.meta_data = meta_data
@@ -236,9 +237,9 @@ class Segmentation():
                 return path_list[min]
 
     def _init_mask_folder(self, p_segmentation_folder, mask_glob='*desc-*', regex='desc-\w+', force_inconsistent_masks=False, p_seg_ref=None):
-        logging.info(f"Initialization from folder of binary masks: {p_segmentation_folder}")
+        logger.info(f"Initialization from folder of binary masks: {p_segmentation_folder}")
         mask_files = list(p_segmentation_folder.glob(mask_glob))
-        logging.debug(f"Found {len(mask_files)} masks in {p_segmentation_folder}")
+        logger.debug(f"Found {len(mask_files)} masks in {p_segmentation_folder}")
         if len(mask_files)>0:
             if p_seg_ref is not None:
                 p_ref = Path(p_seg_ref)
@@ -256,7 +257,7 @@ class Segmentation():
                 roi = self._decode_mask_name(mask_file.name, regex=regex)
                 self.add_roi(seg_sitk, roi=roi, overwrite=False, force=force_inconsistent_masks) # also checks metadata for consistency
         else:
-            logging.warning(f"No mask files found in '{p_segmentation_folder}' using mask_glob='{mask_glob}'")
+            logger.warning(f"No mask files found in '{p_segmentation_folder}' using mask_glob='{mask_glob}'")
 
     def select_rois(self, roi_list: list, query_by='id'):
         if (roi_list is None) or (len(roi_list) == 0):
@@ -284,7 +285,7 @@ class Segmentation():
             rois = [ self.get_roi(self.labels.get_roi_id_from_name(name)) for name in roi_list ]
         else:
             rois = []
-            logging.fatal(f"'query_by only accepts values 'id' or 'name'")
+            logger.fatal(f"'query_by only accepts values 'id' or 'name'")
         return rois
 
     def add_roi_union(self, roi_list: list, roi_new_name='merged', query_by='id', remove_original=False):
@@ -318,11 +319,11 @@ class Segmentation():
 
     def remove_roi_by_id(self, roi=None):
         if roi is None:
-            logging.warning(f"No ROI specified")
+            logger.warning(f"No ROI specified")
         elif not self.has_roi(roi):
-            logging.warning(f"ROI does not exist")
+            logger.warning(f"ROI does not exist")
         else:
-            logging.info(f"Removing ROI {roi}")
+            logger.info(f"Removing ROI {roi}")
             self.binary_masks.pop(roi)
             if self._has_labels():
                 self.labels.remove_roi_id(roi)
@@ -331,7 +332,7 @@ class Segmentation():
         if roi_id in self.get_roi_ids():
             return self.binary_masks[roi_id]
         else:
-            logging.warning(f"ROI ID {roi_id} does not exist")
+            logger.warning(f"ROI ID {roi_id} does not exist")
 
     def add_roi(self, mask, roi=None, name=None, abbreviation=None, overwrite=False, force=True):
         # check ROI IDs
@@ -343,17 +344,17 @@ class Segmentation():
             if roi is None:
                 if self.get_max_roi_id() is not None:
                     roi = self.get_max_roi_id() + 1
-                    logging.warning(f"No ROI specified, using next free ROI ID {roi}")
+                    logger.warning(f"No ROI specified, using next free ROI ID {roi}")
                 else: # happens if there is no other roi in segmentation
                     roi = 1
 
         elif (roi in self.get_roi_ids()) and not overwrite:
-            logging.fatal(f"ROI ID {roi} already used. Remove existing ROI or change ID")
+            logger.fatal(f"ROI ID {roi} already used. Remove existing ROI or change ID")
             roi = None
         elif (roi in self.get_roi_ids()) and overwrite:
-            logging.info(f"ROI ID {roi} already used. Will overwrite")
+            logger.info(f"ROI ID {roi} already used. Will overwrite")
         else:
-            logging.info(f"Adding mask as ROI ID {roi}.")
+            logger.info(f"Adding mask as ROI ID {roi}.")
         # check masks
         check_ok, boolean_mask  = self._check_mask(mask, force=force)
 
@@ -362,23 +363,23 @@ class Segmentation():
             if self._has_labels() and (name is not None):
                 self.labels.add_roi(name, roi_id=roi, abbreviation=abbreviation, overwrite=overwrite)
         else:
-            logging.fatal("Cannot add mask")
+            logger.fatal("Cannot add mask")
 
     def _check_mask(self, mask, force=False):
         check_ok = False
         bin_mask = None
         if isinstance(mask, sitk.Image):
-            logging.debug("Got mask as sitk image")
+            logger.debug("Got mask as sitk image")
             if self._check_mask_sitk_meta(mask):
                 results = get_boolean_masks_from_seg(mask)
                 if len(results['binary_masks'])==1:
                     bin_mask = list(results['binary_masks'].values())[0]
                     check_ok = True
                 else:
-                    logging.fatal(f"Found {len(results['binary_masks'])} masks. Only one mask is expected")
+                    logger.fatal(f"Found {len(results['binary_masks'])} masks. Only one mask is expected")
             else:
                 if force:
-                    logging.warning(f"Mask metadata different than expected; forcing inclusion via resampling")
+                    logger.warning(f"Mask metadata different than expected; forcing inclusion via resampling")
                     if hasattr(self, 'mask_orientation'):
                         mask = self.match_orientation(mask, self.mask_orientation)
                     if hasattr(self, 'p_mask_ref'):
@@ -388,10 +389,10 @@ class Segmentation():
                         bin_mask = list(results['binary_masks'].values())[0]
                         check_ok = True
                     else:
-                        logging.fatal(f"Found {len(results['binary_masks'])} masks. Only one mask is expected")
+                        logger.fatal(f"Found {len(results['binary_masks'])} masks. Only one mask is expected")
 
         elif isinstance(mask, np.ndarray):
-            logging.debug("Got mask as numpy array")
+            logger.debug("Got mask as numpy array")
             if self._check_mask_np_array_meta(mask):
                 roi_ids_in_mask = np.unique(mask).tolist()
                 roi_ids_in_mask.remove(0)
@@ -399,10 +400,9 @@ class Segmentation():
                     bin_mask = mask.astype(bool)
                     check_ok = True
                 else:
-                    logging.fatal(f"Found {len(roi_ids_in_mask)} masks. Only one mask is expected")
+                    logger.fatal(f"Found {len(roi_ids_in_mask)} masks. Only one mask is expected")
         else:
-            logging.fatal(f"Expect mask of type 'np.ndarray' or 'sitk.Image'; got '{type(mask)}'")
-
+            logger.fatal(f"Expect mask of type 'np.ndarray' or 'sitk.Image'; got '{type(mask)}'")
         return check_ok, bin_mask
 
     def _check_mask_np_array_meta(self, mask):
@@ -410,7 +410,7 @@ class Segmentation():
         if shape==self.meta_data['shape']:
             return True
         else:
-            logging.fatal(f"Shape of new mask ({shape}) does not agree with reference ({self.meta_data['shape']})")
+            logger.fatal(f"Shape of new mask ({shape}) does not agree with reference ({self.meta_data['shape']})")
             return False
 
     def _check_mask_sitk_meta(self, mask):
@@ -422,7 +422,7 @@ class Segmentation():
             if meta_mask==meta_ref:
                 tests.append(True)
             else:
-                logging.fatal(f"{key} of new mask ({meta_mask}) does not agree with reference ({meta_ref})")
+                logger.fatal(f"{key} of new mask ({meta_mask}) does not agree with reference ({meta_ref})")
                 tests.append(False)
         if np.all(tests):
             return True
@@ -462,7 +462,7 @@ class Segmentation():
         elif mode == 'dcmseg':
             self.write_seg_as_dcm_seg_multiclass(p=p, base_name=base_name, p_ref=p_ref)
         else:
-            logging.fatal(f"Mode {mode} undefined. Choose from modes 'masks' or 'labelmap'")
+            logger.fatal(f"Mode {mode} undefined. Choose from modes 'masks' or 'labelmap'")
 
 
     def write_seg_as_boolean_masks(self, p: Path, base_name: str, p_ref=None):
@@ -474,8 +474,8 @@ class Segmentation():
             sitk_mask = self.get_mask_as_sitk(roi)
             mask_name = self._create_mask_name(base_name, roi)
             p_out = p.joinpath(mask_name)
-            logging.debug(f"Writing ROI {roi} to {p_out}")
-            logging.debug(f"TYPE {type(sitk_mask)}")
+            logger.debug(f"Writing ROI {roi} to {p_out}")
+            logger.debug(f"TYPE {type(sitk_mask)}")
             sitk.WriteImage(sitk_mask, p_out.as_posix())
 
     def has_target_orientation(self):
@@ -490,7 +490,7 @@ class Segmentation():
         if not labelmap_sitk is None:
             labelmap_name = self._create_labelmap_name(base_name)
             p_out = p.joinpath(labelmap_name)
-            logging.debug(f"Writing labelmap to {p_out}")
+            logger.debug(f"Writing labelmap to {p_out}")
             sitk.WriteImage(labelmap_sitk, p_out.as_posix())
 
 
@@ -503,7 +503,7 @@ class Segmentation():
         if not labelmap_rtstruct is None:
             rtstruct_name = self._create_rtstruct_name(base_name)
             p_out = p.joinpath(rtstruct_name)
-            logging.debug(f"Writing RTSTRUCT to {p_out}")
+            logger.debug(f"Writing RTSTRUCT to {p_out}")
             labelmap_rtstruct.save(p_out.as_posix())
 
     def write_seg_as_dcm_seg_multiclass(self, p: Path, base_name: str, p_ref=None):
@@ -516,16 +516,16 @@ class Segmentation():
             dcm_seg_name = self._create_dcm_seg_name(base_name)
             
             p_out = p.joinpath(dcm_seg_name)
-            logging.debug(f"Writing DCM-SEG to {p_out}")
+            logger.debug(f"Writing DCM-SEG to {p_out}")
             labelmap_dcm_seg.save_as(p_out.as_posix())
 
     @staticmethod
     def match_orientation(sitk_img, target_orientation):
         orientation_filter = sitk.DICOMOrientImageFilter()
         orientation_filter.SetDesiredCoordinateOrientation(target_orientation)
-        logging.info(f"Orientation: {sitk_img.GetDirection()} -> Target Orientation: {target_orientation}")
+        logger.info(f"Orientation: {sitk_img.GetDirection()} -> Target Orientation: {target_orientation}")
         sitk_mask = orientation_filter.Execute(sitk_img)
-        logging.info(f"   ... adjusted Orientation: {sitk_mask.GetDirection()}")
+        logger.info(f"   ... adjusted Orientation: {sitk_mask.GetDirection()}")
         return sitk_mask
 
 
@@ -549,18 +549,18 @@ class Segmentation():
             mask_ref = self.get_roi(self.get_max_roi_id())
             labelmap_np = np.zeros(mask_ref.shape, np.uint8)
             for roi in self.get_roi_ids():
-                logging.debug(f"Adding mask of ROI {roi} to labelmap")
+                logger.debug(f"Adding mask of ROI {roi} to labelmap")
                 mask = self.get_roi(roi)
                 labelmap_np[mask] = int(roi)
-                logging.debug(f"ROI {roi}, {mask.sum()} true values")
-            logging.debug(f"Final segmentation labelmap contains {len(np.unique(labelmap_np))-1} unique labels))")
+                logger.debug(f"ROI {roi}, {mask.sum()} true values")
+            logger.debug(f"Final segmentation labelmap contains {len(np.unique(labelmap_np))-1} unique labels")
             labelmap_sitk = self._convert_nparray_to_sitk(labelmap_np)
             if self.has_target_orientation():
                 labelmap_sitk = self.match_orientation(labelmap_sitk, self.target_orientation)
             if hasattr(self, 'p_out_ref'):
                 labelmap_sitk = self.match_size(labelmap_sitk, self.p_out_ref)
         else:
-            logging.fatal("Cannot merge ROIs into single labelmap due to overlap")
+            logger.fatal("Cannot merge ROIs into single labelmap due to overlap")
             labelmap_sitk = None
         return labelmap_sitk
 
@@ -580,7 +580,7 @@ class Segmentation():
 
         if (p_dcm_ref is None):
             if hasattr(self, 'p_dcm_ref'):
-                logging.info(f"Using '{self.p_dcm_ref}' as reference DCM image for DCM-SEG")
+                logger.info(f"Using '{self.p_dcm_ref}' as reference DCM image for DCM-SEG")
                 p_dcm_ref = self.p_dcm_ref
 
         if p_dcm_ref is not None:
@@ -601,7 +601,7 @@ class Segmentation():
             
             dcm_seg = writer.write(labelmap_sitk, dcm_ref_files)
         else:
-            logging.fatal(f"No DCM reference series specified. Needed for DCM'SEG construction")
+            logger.fatal(f"No DCM reference series specified. Needed for DCM'SEG construction")
             dcm_seg = None
         return dcm_seg
     
@@ -634,7 +634,7 @@ class Segmentation():
             
             else:    
                 color = label_to_rgb["Periventricular"]
-                logging.warning(f"Label '{name}' not found in label_to_rgb mapping. Using default color.")
+                logger.warning(f"Label '{name}' not found in label_to_rgb mapping. Using default color.")
             
             segments.append(get_segment(roi, abbr, name, color))
 
@@ -689,20 +689,20 @@ class Segmentation():
         else:
             df_sel = df_intersection[df_intersection.n_intersection > 0]
             for idx, row in df_sel.iterrows():
-                logging.warning(f"Overlap between masks {row['mask_1']} & {row['mask_2']}")
+                logger.warning(f"Overlap between masks {row['mask_1']} & {row['mask_2']}")
             df_sel2 = df_intersection[df_intersection.rel_intersection==1]
             for idx, row in df_sel2.iterrows():
-                logging.warning(f"Masks {row['mask_1']} & {row['mask_2']} appear to be identical")
+                logger.warning(f"Masks {row['mask_1']} & {row['mask_2']} appear to be identical")
 
         if (len(df_sel) > 0):
             if mode=='ignore':
-                logging.warning(f"Found overlaps between masks but ignore -- ROIs in resulting labelmap will differ from individual masks")
+                logger.warning(f"Found overlaps between masks but ignore -- ROIs in resulting labelmap will differ from individual masks")
                 test_ok = True
             elif mode=='enforce':
-                logging.fatal(f"Found overlaps between masks -- cannot produce lablemap ")
+                logger.fatal(f"Found overlaps between masks -- cannot produce lablemap ")
                 test_ok = False
             else:
-                logging.fatal(f"Mode '{mode}' not defined ")
+                logger.fatal(f"Mode '{mode}' not defined ")
                 test_ok = False
         else:
             test_ok = True
@@ -722,7 +722,7 @@ class Segmentation():
             roi_name_abbr = masks[0].split('-')[-1]
             roi = self.labels.get_roi_id_from_abbreviation(roi_name_abbr)
         else:
-            logging.fatal(f"Did not find ROI ids in mask name '{mask_name}'")
+            logger.fatal(f"Did not find ROI ids in mask name '{mask_name}'")
             roi = None
         return roi
 

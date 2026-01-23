@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-
 import SimpleITK as sitk
 import numpy as np
 import pandas as pd
@@ -8,6 +7,7 @@ import tempfile
 import shutil
 from dcmrtstruct2nii import dcmrtstruct2nii
 
+logger = logging.getLogger(__name__)
 
 class DcmRtstruct2NiiWrapper():
 
@@ -44,20 +44,20 @@ class DcmRtstruct2NiiWrapper():
             roi_mask_bool = (roi_mask_nii == roi_id)
             return roi_mask_bool
         else:
-            logging.warning(f"ROI id {roi_id} does not exist")
+            logger.warning(f"ROI id {roi_id} does not exist")
     def get_roi_mask_sitk_by_id(self, roi_id):
         if roi_id in self.roi_dict.keys():
             roi_name, p = self.roi_dict[roi_id]
             roi_mask_sitk = sitk.ReadImage(p.as_posix())
             return roi_mask_sitk
         else:
-            logging.warning(f"ROI id {roi_id} does not exist")
+            logger.warning(f"ROI id {roi_id} does not exist")
     def get_roi_name_by_id(self, roi_id):
         if roi_id in self.roi_dict.keys():
             roi_name, p = self.roi_dict[roi_id]
             return roi_name
         else:
-            logging.warning(f"ROI id {roi_id} does not exist")
+            logger.warning(f"ROI id {roi_id} does not exist")
 
     def remove_tmp(self):
         shutil.rmtree(self.p_tmp)
@@ -96,11 +96,11 @@ def match_orientation(sitk_img_ref: sitk.Image, sitk_img_sec: sitk.Image, verbos
     direction_sec = sitk_img_sec.GetDirection()
     orientation_sec = orientation_filter.GetOrientationFromDirectionCosines(direction_sec)
     if verbose:
-        logging.info(f"Reference image has direction '{direction_ref}', orientation '{orientation_ref}'")
-        logging.info(f"Second image has direction '{direction_sec}', orientation '{orientation_sec}'")
+        logger.info(f"Reference image has direction '{direction_ref}', orientation '{orientation_ref}'")
+        logger.info(f"Second image has direction '{direction_sec}', orientation '{orientation_sec}'")
     if orientation_ref != orientation_sec:
         if verbose:
-            logging.info(f"Converting orientation of second image: '{orientation_sec}' --> '{orientation_ref}'")
+            logger.info(f"Converting orientation of second image: '{orientation_sec}' --> '{orientation_ref}'")
         orientation_filter.SetDesiredCoordinateOrientation(orientation_ref)
         img_sec_reoriented = orientation_filter.Execute(sitk_img_sec)
         orientation_sec_reoriented = orientation_filter.GetOrientationFromDirectionCosines(img_sec_reoriented.GetDirection())
@@ -117,7 +117,7 @@ def intersection_bin_mask(mask1: np.ndarray, mask2:np.ndarray, rel_to=1):
     elif rel_to==2:
         n_ref = mask2.sum()
     else:
-        logging.warning(f"'rel_to' can take values '1' or '2', not {rel_to}. Using '1' as reference")
+        logger.warning(f"'rel_to' can take values '1' or '2', not {rel_to}. Using '1' as reference")
         n_ref = mask1.sum()
     rel_intersection = n_intersection/n_ref
     result = {'n_intersection' : n_intersection,
@@ -131,7 +131,7 @@ def get_boolean_masks_from_seg(seg_sitk: sitk.Image, roi_ids=None, background=0)
     seg_nii = sitk.GetArrayFromImage(seg_sitk)
     roi_ids_in_img = np.unique(seg_nii).tolist()
     roi_ids_in_img.remove(background)
-    logging.debug(f"Segmentation image contains {len(roi_ids_in_img)} labels")
+    logger.debug(f"Segmentation image contains {len(roi_ids_in_img)} labels")
     seg_meta = get_metadata_from_seg(seg_sitk)
     if roi_ids is None:
         roi_ids = roi_ids_in_img
@@ -178,10 +178,10 @@ def make_string_BIDS_value_compliant(s: str):
 def match_size(sitk_img_ref, sitk_img_sec, interpolator=sitk.sitkNearestNeighbor):
     size_ref = sitk_img_ref.GetSize()
     size_sec = sitk_img_sec.GetSize()
-    logging.debug(f"Reference image has size '{size_ref}'")
-    logging.debug(f"Second image has size    '{size_sec}'")
+    logger.debug(f"Reference image has size '{size_ref}'")
+    logger.debug(f"Second image has size    '{size_sec}'")
     if not np.all(size_ref == size_sec):
-        logging.debug(f"Resampling second image: '{size_sec}' --> '{size_ref}'")
+        logger.debug(f"Resampling second image: '{size_sec}' --> '{size_ref}'")
         resample = sitk.ResampleImageFilter()
         resample.SetReferenceImage(sitk_img_ref)
         resample.SetInterpolator(interpolator)
@@ -235,8 +235,8 @@ def compare(image_1, image_2, rel_to=2, mode='same-id'):
         lsf_2.Execute(image_2)
         df = pd.DataFrame()
         i = 0
-        logging.debug(f"ROIs in image 1: '{lsf_1.GetLabels()}'")
-        logging.debug(f"ROIs in image 2: '{lsf_2.GetLabels()}'")
+        logger.debug(f"ROIs in image 1: '{lsf_1.GetLabels()}'")
+        logger.debug(f"ROIs in image 2: '{lsf_2.GetLabels()}'")
 
         # create label pairs in function of 'mode'
         label_pairs_list = []
@@ -254,7 +254,7 @@ def compare(image_1, image_2, rel_to=2, mode='same-id'):
             seg_1 = (image_1 == label_id_1)
             n_vox_2 = lsf_2.GetNumberOfPixels(label_id_2)
             seg_2 = (image_2 == label_id_2)
-            logging.debug(f"Image 1 - ROI-{label_id_1}: {n_vox_1} || Image 2 - ROI-{label_id_2}: {n_vox_2}")
+            logger.debug(f"Image 1 - ROI-{label_id_1}: {n_vox_1} || Image 2 - ROI-{label_id_2}: {n_vox_2}")
 
             results = {'img_1_roi': label_id_1,
                        'img_2_roi': label_id_2,
@@ -280,16 +280,16 @@ def compare(image_1, image_2, rel_to=2, mode='same-id'):
             elif rel_to == 1:
                 ref_col = df['n_vox_roi_1']
             else:
-                logging.warning(f"'rel_to' can take values '1' or '2', not {rel_to}. Using '1' as reference")
+                logger.warning(f"'rel_to' can take values '1' or '2', not {rel_to}. Using '1' as reference")
                 ref_col = df['n_vox_roi_1']
             df.loc[:, 'rel_intersection'] = df['n_vox_intersection'] / ref_col
             for col_name in ['img_1_roi', 'img_2_roi', 'n_vox_roi_1', 'n_vox_roi_2', 'n_vox_intersection']:
                 df.loc[:, col_name] = df[col_name].astype(int)
         else:
-            logging.info("Not found any ROIs to intersect")
+            logger.info("Not found any ROIs to intersect")
             df = None
     else:
-        logging.fatal(f"Mode '{mode}' not defined")
+        logger.fatal(f"Mode '{mode}' not defined")
         df = None
 
     return df
