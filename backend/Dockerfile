@@ -86,10 +86,18 @@ RUN cp -r /opt/ants/lib/* /usr/local/lib/ 2>/dev/null || true && \
     ldconfig
 
 # Install WMH-SynthSeg (replaces FreeSurfer)
+# Pin to specific commit for reproducibility and security
 RUN git clone https://github.com/lasopablo/freesurfer-freesurfer-dev-mri_WMHsynthseg.git /app/wmh_synthseg && \
+    cd /app/wmh_synthseg && \
+    git checkout 2bf9a421f9707142a83db575ac0f3fa9a2d2631c && \
+    cd / && \
     mkdir -p /app/wmh_synthseg/models && \
     wget -O /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth https://ftp.nmr.mgh.harvard.edu/pub/dist/lcnpublic/dist/WMH-SynthSeg/WMH-SynthSeg_v10_231110.pth && \
-    sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py
+    echo "Verifying model file size..." && \
+    [ -f /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth ] && \
+    [ $(stat -c%s /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth) -gt 1000000 ] || (echo "Error: Model file download failed or file too small" >&2; exit 1) && \
+    sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
+    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1)
 
 # Set WMH-SynthSeg environment
 ENV WMHSYNTHSEG_HOME="/app/wmh_synthseg"

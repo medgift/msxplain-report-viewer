@@ -604,11 +604,11 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             
                             # Convert segmentation to DICOM-SEG
                             logger.info("Converting NIFTI label maps to DCM SEG...")
-                            dcmseg_flair = executor.submit(
+                            executor.submit(
                                 msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
                             ).result()
                             
-                            dcmseg_t1n = executor.submit(
+                            executor.submit(
                                 msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             

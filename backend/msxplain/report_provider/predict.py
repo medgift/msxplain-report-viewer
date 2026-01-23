@@ -25,6 +25,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcella
         input_val_paths (list): List of paths to input directories
         input_prefixes (list): List of input file prefixes
         model_checkpoint (str): Path to model weights
+        parcellation_dir (str): Path to parcellation directory
         num_workers (int): Number of workers for data loading
         cache_rate (float): Cache rate for data loading
         threshold (float): Threshold for binary prediction
