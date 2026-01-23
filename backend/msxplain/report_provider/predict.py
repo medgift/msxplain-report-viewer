@@ -16,13 +16,16 @@ import time
 import traceback
 start_time = time.time()
 
-def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=True):
+logger = logging.getLogger(__name__)
+
+def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcellation_dir, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=True):
     """Run MSXplain prediction
     
     Args:
         input_val_paths (list): List of paths to input directories
         input_prefixes (list): List of input file prefixes
         model_checkpoint (str): Path to model weights
+        parcellation_dir (str): Path to parcellation directory
         num_workers (int): Number of workers for data loading
         cache_rate (float): Cache rate for data loading
         threshold (float): Threshold for binary prediction
@@ -33,14 +36,14 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
         
         # Override CUDA availability if requested
         if force_cuda:
-            logging.info("Running MS Lesion Prediction IN CUDA")
+            logger.info("Running MS Lesion Prediction IN CUDA")
             torch.cuda.is_available = lambda : True
         else:
-            logging.info("Running MS Lesion Prediction IN CPU")
+            logger.info("Running MS Lesion Prediction IN CPU")
             torch.cuda.is_available = lambda : False
         
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logging.info(f"Using device: {device}")
+        logger.info(f"Using device: {device}")
         torch.multiprocessing.set_sharing_strategy('file_system')
         
         # Model parameters
@@ -65,7 +68,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
                 torch.nn.init.xavier_normal_(layer.weight, gain=1.0)
         
         # Load model weights
-        logging.info(f"Loading model weights from {model_checkpoint}")
+        logger.info(f"Loading model weights from {model_checkpoint}")
         if torch.cuda.is_available():
             model.load_state_dict(torch.load(model_checkpoint, map_location='cuda'))
         else:
@@ -100,7 +103,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
             num_workers=num_workers
         )
         
-        logging.info(f"Initializing the dataset. Number of subjects {len(val_loader)}")
+        logger.info(f"Initializing the dataset. Number of subjects {len(val_loader)}")
         
         # Process each batch
         for i, data in enumerate(val_loader):
@@ -108,7 +111,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
             # Use the first input file for affine information
             input_file = os.path.join(input_val_paths[0], input_prefixes[0])
             input_affine = nib.load(input_file).affine
-            logging.info(f"Processing input file: {input_file}")
+            logger.info(f"Processing input file: {input_file}")
             
             # Move inputs to device
             if torch.cuda.is_available():
@@ -126,18 +129,14 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, num_work
             
             # Save prediction
             pred = nib.Nifti1Image(output_mask, input_affine)
-            output_path = Path(input_val_paths[0])
-            samseg_dir = output_path / "SAMSEG"
-            samseg_dir.mkdir(parents=True, exist_ok=True)
-            
-            pred_path = samseg_dir / "pred.nii.gz"
+            pred_path = os.path.join(str(parcellation_dir), "pred.nii.gz")
             nib.save(pred, pred_path)
-            logging.info(f"Prediction saved to {pred_path}")
+            logger.info(f"Prediction saved to {pred_path}")
         
         return str(pred_path)
         
     except Exception as e:
-        logging.error(f"Error in prediction: {str(e)}")
+        logger.error(f"Error in prediction: {str(e)}")
         traceback.print_exc()
         raise
 

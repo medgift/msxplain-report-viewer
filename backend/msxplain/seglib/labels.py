@@ -1,10 +1,9 @@
 import logging
 from pathlib import Path
-
 import pandas as pd
-
 from .helpers import make_string_BIDS_value_compliant
 
+logger = logging.getLogger(__name__)
 
 class Labels():
     def __init__(self, p=None):
@@ -25,7 +24,7 @@ class Labels():
         elif ext == 'tsv':
             labels = pd.read_csv(p, delimiter='\t', header=None)
         else:
-            logging.fatal(f"Cannot read labels file '{p}'; expect 'csv' or 'tsv' file.")
+            logger.fatal(f"Cannot read labels file '{p}'; expect 'csv' or 'tsv' file.")
 
         if labels is not None:
             if len(labels.columns)==2:
@@ -34,7 +33,7 @@ class Labels():
             elif len(labels.columns)==3:
                 labels.columns = ['roi_id', 'roi_name', 'abbreviation']
             else:
-                logging.fatal(f"Labels file '{p}' contains {len(labels.columns)} columns; only 2 or 3 expected")
+                logger.fatal(f"Labels file '{p}' contains {len(labels.columns)} columns; only 2 or 3 expected")
         return labels
 
     def generate_abbreviations_from_names(self, fct=make_string_BIDS_value_compliant):
@@ -47,7 +46,7 @@ class Labels():
         elif ext == 'tsv':
             self.labels_df.sort_values('roi_id', ascending=True).to_csv(p.as_posix(), sep='\t', header=None, index=False)
         else:
-            logging.fatal(f"Filetype '{ext}' not defined.")
+            logger.fatal(f"Filetype '{ext}' not defined.")
 
     @staticmethod
     def get_from_df(df: pd.DataFrame, column_to_search: str, column_to_return: str, search_str,
@@ -67,11 +66,11 @@ class Labels():
         if len(values)==1:
            return values[0]
         elif len(values)==0:
-            logging.warning(f"Found no match")
+            logger.warning(f"Found no match")
         elif (len(values)>1) and allow_multiple:
             return values.tolist()
         else:
-            logging.warning(f"Found {len(values)} item; only 1 expected")
+            logger.warning(f"Found {len(values)} item; only 1 expected")
 
     def get_roi_id_from_name(self, name:str, **kwargs):
         val = self.get_from_df(self.labels_df, 'roi_name', 'roi_id', search_str=name, **kwargs)
@@ -92,11 +91,11 @@ class Labels():
     def remove_roi_id(self, roi_id: int):
         index = self.get_from_df(self.labels_df, 'roi_id', 'index', search_str=roi_id)
         if index is not None:
-            logging.debug(f"Removing roi {roi_id} (idx={index}) from labels df")
+            logger.debug(f"Removing roi {roi_id} (idx={index}) from labels df")
             self.labels_df.drop(index=index, inplace=True)
             self.labels_df.reindex()
         else:
-            logging.warning(f"ROI does not exist")
+            logger.warning(f"ROI does not exist")
 
     def add_roi(self, name: str, roi_id=None, abbreviation=None, overwrite=False):
         if abbreviation is None:
@@ -107,14 +106,14 @@ class Labels():
                 roi_id=1
             else:
                 roi_id = roi_id + 1
-            logging.warning(f"No ROI specified, using next free ROI ID {roi_id}")
+            logger.warning(f"No ROI specified, using next free ROI ID {roi_id}")
         elif (roi_id in self.get_roi_ids()) and not overwrite:
-            logging.fatal(f"ROI ID {roi_id} already used. Cannot add ROI -> Remove existing ROI or change ID")
+            logger.fatal(f"ROI ID {roi_id} already used. Cannot add ROI -> Remove existing ROI or change ID")
             roi_id = None
         elif (roi_id in self.get_roi_ids()) and overwrite:
-            logging.info(f"ROI ID {roi_id} already used. Will overwrite")
+            logger.info(f"ROI ID {roi_id} already used. Will overwrite")
         else:
-            logging.info(f"Adding ROI ID {roi_id} with name '{name}'.")
+            logger.info(f"Adding ROI ID {roi_id} with name '{name}'.")
         if roi_id is not None:
             if self.labels_df.empty:
                 index_cond = 0
@@ -140,14 +139,14 @@ class Labels():
                                                             is_regexp=is_regexp, allow_multiple=True)
             if query_in not in ['name_abbreviation', 'name', 'abbreviation']:
                 query_in = 'name_abbreviation'
-                logging.warning(f"{query_in} is not a valid option for 'query_in', using 'name_abbreviation'")
+                logger.warning(f"{query_in} is not a valid option for 'query_in', using 'name_abbreviation'")
             if query_in=='name_abbreviation':
                 if (roi_id_name is not None) and (roi_id_abbr is not None) :
                     if roi_id_name != roi_id_abbr:
-                        logging.warning('Search in name and abbreviation returned different results: ')
-                        logging.warning(f' - name         -> id {roi_id_name}')
-                        logging.warning(f' - abbreviation -> id {roi_id_abbr}')
-                        logging.warning(f'... using abbreviation -> id {roi_id_abbr}')
+                        logger.warning('Search in name and abbreviation returned different results: ')
+                        logger.warning(f' - name         -> id {roi_id_name}')
+                        logger.warning(f' - abbreviation -> id {roi_id_abbr}')
+                        logger.warning(f'... using abbreviation -> id {roi_id_abbr}')
                     roi_id = roi_id_abbr
                 elif (roi_id_name is not None) and (roi_id_abbr is None):
                     roi_id = roi_id_name
@@ -169,7 +168,7 @@ class Labels():
                 self.rename_roi(roi_id, name_new=new_name, abbreviation_new=new_name)
                 rois_renamed.append(roi_id)
             else:
-                logging.warning(f"Could not find ROI using regexp '{regexp}'")
+                logger.warning(f"Could not find ROI using regexp '{regexp}'")
         return rois_renamed
 
     def swap_roi_ids(self, roi_id_old: int, roi_id_new: int):
