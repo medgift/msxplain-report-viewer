@@ -400,17 +400,63 @@ class MSXplainReport:
     
     def compute_labels(self, report_df):
         
-        # Get labels from report_df
+        # Get labels from report_df, excluding False Positive lesions
         labels_df = pd.DataFrame({
             'roi_id': report_df['Lesion Index'],
             'roi_name': report_df['Lesion Type']
         })
         
+        # Filter out False Positive labels for DCM-SEG conversion
+        labels_df = labels_df[labels_df['roi_name'] != 'False Positive']
+        
         labels_path = os.path.join(self.output_dir, "labels.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
         
         return Path(labels_path)
+    
+    def create_filtered_lesion_map(self, lesion_map_path, report_df, output_suffix="_dcmseg"):
+        """Create a filtered lesion map without False Positive lesions for DCM-SEG conversion
         
+        Args:
+            lesion_map_path: Path to the original lesion map NIFTI file
+            report_df: DataFrame containing lesion information
+            output_suffix: Suffix to add to the output filename
+            
+        Returns:
+            Path to the filtered lesion map
+        """
+        # Get False Positive lesion indices
+        false_positive_indices = report_df[report_df['Lesion Type'] == 'False Positive']['Lesion Index'].tolist()
+        
+        if not false_positive_indices:
+            logger.info("No False Positive lesions found, using original lesion map")
+            return Path(lesion_map_path)
+        
+        logger.info(f"Filtering out {len(false_positive_indices)} False Positive lesions: {false_positive_indices}")
+        
+        # Load the lesion map
+        lesion_img = sitk.ReadImage(str(lesion_map_path))
+        lesion_data = sitk.GetArrayFromImage(lesion_img)
+        
+        # Create a copy for filtering
+        filtered_data = lesion_data.copy()
+        
+        # Remove False Positive lesions by setting their voxels to 0
+        for fp_index in false_positive_indices:
+            filtered_data[lesion_data == fp_index] = 0
+        
+        # Create output path
+        base_name = os.path.splitext(os.path.splitext(os.path.basename(lesion_map_path))[0])[0]
+        output_path = os.path.join(self.output_dir, f"{base_name}{output_suffix}.nii.gz")
+        
+        # Create new image with filtered data
+        filtered_img = sitk.GetImageFromArray(filtered_data)
+        filtered_img.CopyInformation(lesion_img)
+        
+        # Save filtered lesion map
+        sitk.WriteImage(filtered_img, output_path)
+        
+        return Path(output_path)
 
     def nifti_to_dcmseg(self, lesion_map, labels_path, dcm_ref, out_basename):
         """Convert NIFTI to DCM-SEG"""

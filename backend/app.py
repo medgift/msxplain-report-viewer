@@ -602,15 +602,31 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
                             lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
-                            # Convert segmentation to DICOM-SEG
-                            logger.info("Converting NIFTI label maps to DCM SEG...")
+                            # Create filtered lesion maps (without False Positives) for DCM-SEG conversion
+                            filtered_lesion_map_flair = executor.submit(
+                                msxplain.create_filtered_lesion_map, lesion_map_flair_space_path, report_df, "_flair_dcmseg"
+                            ).result()
+                            
+                            filtered_lesion_map_t1 = executor.submit(
+                                msxplain.create_filtered_lesion_map, lesion_map_path, report_df, "_t1_dcmseg"
+                            ).result()
+                            
+                            # Convert segmentation to DICOM-SEG using filtered lesion maps
+                            logger.info("Converting filtered NIFTI label maps to DCM SEG...")
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_flair, labels_path, Path(flair_dir), "flair"
                             ).result()
                             
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_t1, labels_path, Path(t1_dir), "t1n"
                             ).result()
+                            
+                            # Clean up intermediate filtered NIFTI files
+                            logger.info("Cleaning up intermediate filtered NIFTI files...")
+                            if os.path.exists(filtered_lesion_map_flair):
+                                os.remove(filtered_lesion_map_flair)
+                            if os.path.exists(filtered_lesion_map_t1):
+                                os.remove(filtered_lesion_map_t1)
                             
                             # Upload lesion map outputs(DCM SEG) to Orthanc
                             upload_to_orthanc(session_output_dir)

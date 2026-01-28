@@ -2,7 +2,7 @@
 FROM antsx/ants:2.5.3 as ants-stage
 
 # Main application stage
-FROM python:3.8-slim
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -21,15 +21,14 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libeigen3-dev \
-    libinsighttoolkit4-dev \
     libfftw3-dev \
     libtiff5-dev \
     libfreetype6-dev \
     pkg-config \
     zlib1g-dev \
     libhdf5-dev \
-    libhdf5-cpp-103 \
-    libhdf5-103 \
+    libhdf5-hl-cpp-310 \
+    libhdf5-hl-310 \
     libopenjp2-7-dev \
     libcharls-dev \
     && rm -rf /var/lib/apt/lists/*
