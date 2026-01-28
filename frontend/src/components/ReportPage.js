@@ -114,7 +114,7 @@ const ReportPage = () => {
 
               <div className="subsection findings-section">
                 <h3>Findings</h3>
-                {/* <p className="highlight">False positives of MSXplain: {reportData.lesions.false_positive}</p> */}
+                <p className="highlight">False positives of MSXplain: {reportData.lesions.false_positive}</p>
                 
                 <div className="lesion-stats">
                   <div className="stat-card">

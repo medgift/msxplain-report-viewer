@@ -1,10 +1,26 @@
-from monai.transforms import Compose, CopyItemsd, Lambdad, AddChanneld, Identityd, LoadImaged, NormalizeIntensityd, \
+from monai.transforms import Compose, CopyItemsd, Lambdad, EnsureChannelFirstd, Identityd, LoadImaged, NormalizeIntensityd, \
     ConcatItemsd, DeleteItemsd, ToTensord, RandCropByPosNegLabeld, RandSpatialCropd, RandCropByLabelClassesd, \
     RandShiftIntensityd, RandScaleIntensityd, RandFlipd, RandRotate90d, RandAffined
 from scipy import ndimage
 import numpy as np
 import torch
 
+def get_cc_mask(binary_mask):
+    """Generate connected component mask from binary mask"""
+    if binary_mask.ndim != 3:
+        raise ValueError(f"Mask must have 3 dimensions, got {binary_mask.ndim}.")
+    struct_el = ndimage.generate_binary_structure(rank=3, connectivity=2)
+    labeled_mask, _ = ndimage.label(binary_mask, structure=struct_el)
+    return labeled_mask.astype('float32')
+
+
+def process_probs(prob_map, threshold, l_min):
+    """Process probability map: apply threshold and remove small connected components"""
+    # Apply threshold
+    binary_mask = binarize_mask(prob_map, threshold)
+    # Remove small connected components
+    processed_mask = remove_connected_components(binary_mask, l_min)
+    return processed_mask
 
 def remove_connected_components(segmentation, l_min=3):
     """Remove small lesions leq than `l_min` voxels from the binary segmentation mask.
@@ -52,7 +68,7 @@ def get_val_transforms(input_keys: list, label_key: str, binarize_keys: list = N
                     func=lambda x:
                     ndimage.label(x, structure=ndimage.generate_binary_structure(rank=3, connectivity=2))[0].astype(
                         'float32')),
-            AddChanneld(keys="instance_mask")
+            EnsureChannelFirstd(keys="instance_mask")
         ])
     else:
         geninstm_transform = Identityd(keys=all_keys)
@@ -66,18 +82,20 @@ def get_val_transforms(input_keys: list, label_key: str, binarize_keys: list = N
         [
             LoadImaged(keys=all_keys),
             geninstm_transform,
-            AddChanneld(keys=all_keys), bin_transform,
-            NormalizeIntensityd(keys=input_keys, nonzero=True, channel_wise=True),
+            EnsureChannelFirstd(keys=all_keys), bin_transform,
+            NormalizeIntensityd(keys=input_keys, nonzero=True),
             ConcatItemsd(keys=input_keys, name="inputs"), DeleteItemsd(keys=input_keys),
             ToTensord(keys=all_tr_keys)
         ]
     )
 
+
 def get_valnotarget_transforms(input_keys: list, binarize_keys: list = None, generate_instance_mask: bool = False):
     """
+    Validation transforms without target labels (for inference)
     :param input_keys: mri contrast keys
-    :param label_key: target binary mask key
     :param binarize_keys: keys of multi label masks to be binarized
+    :param generate_instance_mask: if True, will generate instance segmentation targets mask
     :return: monai.transforms.Compose instance
     """
     all_keys = input_keys
@@ -93,12 +111,13 @@ def get_valnotarget_transforms(input_keys: list, binarize_keys: list = None, gen
         [
             LoadImaged(keys=all_keys),
             geninstm_transform,
-            AddChanneld(keys=all_keys), bin_transform,
-            NormalizeIntensityd(keys=input_keys, nonzero=True, channel_wise=True),
+            EnsureChannelFirstd(keys=all_keys), bin_transform,
+            NormalizeIntensityd(keys=input_keys, nonzero=True),
             ConcatItemsd(keys=input_keys, name="inputs"), DeleteItemsd(keys=input_keys),
             ToTensord(keys=all_tr_keys)
         ]
     )
+
 
 def get_train_transforms(input_keys: list, label_key: str, binarize_keys: list = None,
                          balancing_key: str = None, generate_instance_mask: bool = False,
@@ -147,7 +166,7 @@ def get_train_transforms(input_keys: list, label_key: str, binarize_keys: list =
             CopyItemsd(keys=label_key, times=1, names=["instance_mask"]),
             Lambdad(keys="instance_mask",
                     func=lambda x: ndimage.label(x, structure=ndimage.generate_binary_structure(rank=3, connectivity=2))[0].astype('float32')),
-            AddChanneld(keys="instance_mask")
+            EnsureChannelFirstd(keys="instance_mask")
         ])
     else:
         geninstm_transform = Identityd(keys=all_keys)
@@ -183,7 +202,7 @@ def get_train_transforms(input_keys: list, label_key: str, binarize_keys: list =
             # if instance mask is to be generated
             geninstm_transform,
             # necessary
-            AddChanneld(keys=all_keys), NormalizeIntensityd(keys=input_keys, nonzero=True, channel_wise=True),
+            EnsureChannelFirstd(keys=all_keys), NormalizeIntensityd(keys=input_keys, nonzero=True),
             # only if cl mask
             bin_transform,
             # augment intensity
