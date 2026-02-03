@@ -39,7 +39,7 @@ const ReportPage = () => {
   }, [run_id, patient_name, session]);  // Add session to dependency array
 
   const openMcDonaldCriteria = () => {
-    window.open('/files/2017-McDonald-Criteria-PDF.pdf', '_blank');
+    window.open('https://www.thelancet.com/article/S1474-4422(25)00270-4/fulltext#', '_blank');
   };
 
   const openOHIFViewer = () => {
@@ -144,7 +144,7 @@ const ReportPage = () => {
                 <h4>McDonald Criteria</h4>
                 <div className="criteria-cards">
                   <div className="criteria-card">
-                    <h5>Dissemination in Space (DIS)</h5>
+                    <h5>Dissemination in Space (DIS)*</h5>
                     <p>{reportData.dissemination_space}</p>
                   </div>
                   <div className="criteria-card">
@@ -153,6 +153,7 @@ const ReportPage = () => {
                     <p>Not available</p>
                   </div>
                 </div>
+                <p className="highlight">*Intracortical , spinal cord and optic nerve lessions are not assesed. If Not fulfilled, its only taking into account whithe matter lesions.</p>
               </div>
 
               <div className="subsection">
