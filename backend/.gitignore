@@ -1,6 +1,7 @@
 ## Backend ##
 files/*
 msxplain/model/*
+msxplain/ensemble_models/*
 config.yml
 secrets/*
 hd_bet_models/*
