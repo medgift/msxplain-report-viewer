@@ -150,17 +150,14 @@ def plot_psu_distribution(psu_data: np.ndarray, new_psu_value: float, save_path:
 # Main Script Functions
 # ============================================================================
 
-def compute_uncertainties(path_pred: str, output_dir: str, set_name: str, 
-                         n_samples: int, proba_threshold: float,
-                         n_jobs: int = 4, l_min: int = 2, 
-                         class_num: int = 1, temperature: float = 1.0,
-                         probs: bool = True, psu_data_filepath: str = None):
+def compute_uncertainties(output_dir: str, n_samples: int, proba_threshold: float,
+                         n_jobs: int = 4, l_min: int = 2, class_num: int = 1,
+                         temperature: float = 1.0, probs: bool = True,
+                         psu_data_filepath: str = None):
     """Compute uncertainties from NPZ ensemble predictions (programmatic API).
     
     Args:
-        path_pred (str): Path to directory with *_pred.npz files
         output_dir (str): Path to directory where uncertainties will be saved
-        set_name (str): Name of the test set for filename formation
         n_samples (int): Number of ensemble samples to use
         proba_threshold (float): Probability threshold for binary segmentation
         n_jobs (int, optional): Number of parallel workers. Defaults to 4.
@@ -172,11 +169,8 @@ def compute_uncertainties(path_pred: str, output_dir: str, set_name: str,
     """
     np.random.seed(0)
     
-    # Create folder to save uncertainty maps and plots
-    os.makedirs(output_dir, exist_ok=True)
-    
     # Load a dataset of npz predictions
-    npz_dataset = NpzDataset(pred_path=path_pred, pred_prefix='pred.npz')
+    npz_dataset = NpzDataset(pred_path=output_dir, pred_prefix='pred.npz')
     
     # Dataframe to save patient uncertainties
     pat_uncs_df = []
@@ -253,6 +247,7 @@ def compute_uncertainties(path_pred: str, output_dir: str, set_name: str,
             # No lesions predicted
             les_uncs_mask = np.zeros_like(ens_seg_lab, dtype='float32')
             pat_uncs_value = 0.0
+            lesion_uncertainties = {}  # Empty dict for no lesions
             
             # Save empty lesion uncertainty map
             les_uncs_filepath = os.path.join(output_dir, "lesion_uncs.nii.gz")
@@ -270,12 +265,16 @@ def compute_uncertainties(path_pred: str, output_dir: str, set_name: str,
                         cc_mask=(ens_seg_lab == cc_label).astype("float")
                     ) for cc_label in cc_labels)
                 
-                # Create a mask
+                # Create a mask and lesion uncertainties mapping
                 les_uncs_mask = np.zeros_like(ens_seg_lab, dtype='float32')
+                lesion_uncertainties = {}
                 for cc_label, les_uncs_value in zip(cc_labels, les_uncs_list):
                     les_uncs_mask += les_uncs_value * (ens_seg_lab == cc_label).astype('float')
+                    # Store lesion label and its uncertainty value
+                    lesion_uncertainties[int(cc_label)] = float(les_uncs_value)
             else:
                 les_uncs_mask = np.zeros_like(ens_seg_lab, dtype='float32')
+                lesion_uncertainties = {}
             
             # Save lesion uncertainty maps in nifti format
             les_uncs_filepath = os.path.join(output_dir, "lesion_uncs.nii.gz")
@@ -287,10 +286,11 @@ def compute_uncertainties(path_pred: str, output_dir: str, set_name: str,
                 for i in range(n_samples)
             ])
         
-        # Append patient uncertainty to the dataframe
+        # Append patient and lesion uncertainties to the dataframe
         pat_uncs_df.append({
             "filename": fn,
-            "PSU": pat_uncs_value
+            "PSU": pat_uncs_value,
+            "lesion_uncertainties": lesion_uncertainties  # Maps lesion_label -> uncertainty_value
         })
         
         # Create a patient uncertainty plot if possible
@@ -310,7 +310,5 @@ def compute_uncertainties(path_pred: str, output_dir: str, set_name: str,
         
         # Save patient uncertainties dataframe after each patient is processed
         pd.DataFrame(pat_uncs_df).to_csv(
-            os.path.join(output_dir, f"patient_uncs_{set_name}.csv")
+            os.path.join(output_dir, f"patient_uncs.csv")
         )
-    
-    logger.info(f"Uncertainty computation completed. Results saved to: {output_dir}")

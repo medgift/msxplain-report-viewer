@@ -51,6 +51,33 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
         mask_proxy = nib.load(pred_path)
         mask_data = mask_proxy.get_fdata()
         image_path = Path(flair_path)
+        visit_path = image_path.parent
+        
+        # Load uncertainty data from patient_uncs.csv (more efficient than loading 3D image)
+        lesion_uncertainties_dict = {}
+        PSU = None
+        try:
+            patient_uncs_path = visit_path / "patient_uncs.csv"
+            if patient_uncs_path.exists():
+                patient_uncs_file = pd.read_csv(patient_uncs_path)
+                row = patient_uncs_file[patient_uncs_file['filename'] == f'pred.npz']
+                if not row.empty:
+                    PSU = row['PSU'].values[0]
+                    
+                    # Parse lesion uncertainties dictionary
+                    if 'lesion_uncertainties' in row.columns:
+                        import ast
+                        lesion_uncs_str = row['lesion_uncertainties'].values[0]
+                        lesion_uncertainties_dict = ast.literal_eval(lesion_uncs_str)
+                        logger.info(f"Loaded uncertainties for {len(lesion_uncertainties_dict)} lesions from CSV")
+                else:
+                    logger.warning("No matching prediction found in patient_uncs.csv")
+            else:
+                logger.info("patient_uncs.csv not found - report will be generated without uncertainty values")
+        except Exception as e:
+            logger.warning(f"Could not load uncertainty data: {e}. Continuing without uncertainty values.")
+            lesion_uncertainties_dict = {}
+            PSU = None
 
         # Calculate unit volume
         unit_volume = np.asarray(mask_proxy.header['pixdim'][1:4]).prod()
@@ -58,7 +85,7 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
         # Create DataFrame
         df = pd.DataFrame(columns=[
             'ID', 'Lesion Count', 'Lesion Type', 'Lesion Index',
-            'Lesion Center', 'Lesion Voxels', 'Lesion Volume', 'Note'
+            'Lesion Center', 'Lesion Voxels', 'Lesion Volume', 'LLU', 'PSU', 'Note'
         ])
 
         # Get lesion map and prune small lesions
@@ -99,6 +126,10 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
         for n, label_idx_in_label_map in enumerate(unique_label):
             the_cluster = label_map == label_idx_in_label_map
             masked_cluster = img_data[the_cluster]
+            
+            # Get lesion-level uncertainty (LLU) from dictionary
+            LLU = lesion_uncertainties_dict.get(label_idx_in_label_map, None)
+            
             lesion_seg = the_cluster.astype(int)
             com = ndimage.center_of_mass(lesion_seg)
             com = (int(com[0]), int(com[1]), int(com[2]))
@@ -128,12 +159,17 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
                 note = ''.join(str(element) for element in cluster_in_mask_data[1:])
                 cluster_in_mask_data = cluster_in_mask_data[0]
 
-            lesion_number = np.max(unique_label) if n==0 else None
+            if n == 0:
+                lesion_number = np.max(unique_label)
+                psu_value = PSU
+            else:
+                lesion_number = None
+                psu_value = None
 
             # Add to DataFrame
             df.loc[n] = [
                 patient_id, lesion_number, lesion_type, label_idx_in_label_map,
-                com, num_voxel, num_voxel*unit_volume, note
+                com, num_voxel, num_voxel*unit_volume, LLU, psu_value, note
             ]
 
         # Sort and save results

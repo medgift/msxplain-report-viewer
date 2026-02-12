@@ -384,9 +384,7 @@ class MSXplainReport:
             
             try:
                 compute_uncertainties(
-                    path_pred=str(self.output_dir),
                     output_dir=str(self.output_dir),
-                    set_name=self.patient_id,
                     n_samples=len(ckpt_files),
                     proba_threshold=0.5,
                     n_jobs=4,
@@ -444,6 +442,9 @@ class MSXplainReport:
             parcellation_path=self.parcellation_dir
         )
         
+        report_path = os.path.join(self.output_dir, f"report.csv")
+        report_df.to_csv(report_path, index=False)
+        
         return report_df
     
     def compute_labels(self, report_df):
@@ -471,14 +472,16 @@ class MSXplainReport:
             suffix: Suffix to add to the output filename (default: "_dcmseg")
             
         Returns:
-            Path to the filtered lesion map
+            Tuple of (Path to the lesion map, bool indicating if filtering was performed)
+            If no False Positives: returns (original_path, False)
+            If False Positives filtered: returns (filtered_path, True)
         """
         # Get False Positive lesion indices
         false_positive_indices = report_df[report_df['Lesion Type'] == 'False Positive']['Lesion Index'].tolist()
         
         if not false_positive_indices:
             logger.info("No False Positive lesions found, using original lesion map")
-            return Path(lesion_map_path)
+            return Path(lesion_map_path), False
         
         logger.info(f"Filtering out {len(false_positive_indices)} False Positive lesions: {false_positive_indices}")
         
@@ -504,7 +507,7 @@ class MSXplainReport:
         # Save filtered lesion map
         sitk.WriteImage(filtered_img, output_path)
         
-        return Path(output_path)
+        return Path(output_path), True
 
     def nifti_to_dcmseg(self, lesion_map, labels_path, dcm_ref, out_basename):
         """Convert NIFTI to DCM-SEG"""

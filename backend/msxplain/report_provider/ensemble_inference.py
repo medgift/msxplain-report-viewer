@@ -22,9 +22,6 @@ import pytorch_lightning as pl
 import scipy.ndimage as ndimage
 import torch
 import logging
-
-logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
-
 from monai.data import CacheDataset, DataLoader
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
@@ -41,6 +38,7 @@ from monai.transforms import (
 )
 from monai.transforms.utils import allow_missing_keys_mode
 
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
@@ -224,13 +222,10 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
     output_pred_dir = Path(output_path)
     models_path = Path(models_path)
     
-    output_suffix = ""
     post_thr = 4  # More than 3 voxels
-    random_seed = 42
     
     # Find model checkpoints
     ckpt_files = list(models_path.glob("*.ckpt"))
-    logger.info(f"Found {len(ckpt_files)} model checkpoints")
     
     if len(ckpt_files) == 0:
         raise ValueError(f"No .ckpt files found in {models_path}")
@@ -369,9 +364,7 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
     
     # Save NPZ file
     if not os.path.exists(output_filepath):
-        logger.info(f"Creating {new_filename}")
         np.savez_compressed(output_filepath, **to_save)
-        logger.info(f"Saved to {output_filepath}")
     else:
         logger.info(f"File already exists: {output_filepath}")
     
