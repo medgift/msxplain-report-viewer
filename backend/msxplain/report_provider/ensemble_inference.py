@@ -285,7 +285,6 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
     ensemble_list = []
     
     for i, ckpt_file in enumerate(ckpt_files):
-        logger.info(f"Processing model {i+1}/{len(ckpt_files)}: {ckpt_file.name}")
         
         # Load model
         net = Net(config_dict)
