@@ -450,13 +450,23 @@ class MSXplainReport:
     def compute_labels(self, report_df):
         
         # Get labels from report_df, excluding False Positive lesions
+        # Format: Lesion Type (lesion uncertainty) if LLU is available
+        if 'LLU' in report_df.columns:
+            roi_names = report_df.apply(
+                lambda row: f"{row['Lesion Type']} ({row['LLU']:.3f})" if pd.notna(row['LLU']) else row['Lesion Type'],
+                axis=1
+            )
+        else:
+            roi_names = report_df['Lesion Type']
+        
         labels_df = pd.DataFrame({
             'roi_id': report_df['Lesion Index'],
-            'roi_name': report_df['Lesion Type']
+            'roi_name': roi_names
         })
         
         # Filter out False Positive labels for DCM-SEG conversion
-        labels_df = labels_df[labels_df['roi_name'] != 'False Positive']
+        # Use .str.startswith to handle both "False Positive" and "False Positive (uncertainty)"
+        labels_df = labels_df[~labels_df['roi_name'].astype(str).str.startswith('False Positive')]
         
         labels_path = os.path.join(self.output_dir, "labels.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
