@@ -4,6 +4,7 @@ import subprocess
 import traceback
 from pathlib import Path
 import time
+import numpy as np
 import pydicom
 import SimpleITK as sitk
 import torch
@@ -366,6 +367,7 @@ class MSXplainReport:
         # Check if we have ensemble models for uncertainty computation
         ensemble_model_dir = self.msxplain_dir / "ensemble_models"
         ckpt_files = list(ensemble_model_dir.glob("*.ckpt")) if ensemble_model_dir.exists() else []
+        logging.debug(f"Number of ensemble models found: {len(ckpt_files)} in {ensemble_model_dir}")
         
         if len(ckpt_files) > 0:
             # Use ensemble inference + uncertainty computation
@@ -446,18 +448,37 @@ class MSXplainReport:
         report_df.to_csv(report_path, index=False)
         
         return report_df
-    
+
+    @staticmethod
+    def _make_sequential_remap(original_ids: list) -> dict:
+        """Return {original_id: new_sequential_id} mapping, starting at 1.
+
+        Ensures DCM-SEG SegmentNumbers are always 1-N with no gaps regardless
+        of which lesion indices survived filtering.  OHIF Viewer indexes its
+        colour LUT by SegmentNumber, so gaps cause palette cycling and wrong
+        colours for the higher-numbered segments.
+        """
+        return {old_id: new_id for new_id, old_id in enumerate(sorted(original_ids), start=1)}
+
     def compute_labels(self, report_df):
         
         # Get labels from report_df, excluding False Positive lesions
-        # Format: Lesion Type (lesion uncertainty) if LLU is available
+        # Format: "<original_id> <Lesion Type> (<LLU>)" so the original index
+        # is visible in OHIF even after sequential remapping.
         if 'LLU' in report_df.columns:
             roi_names = report_df.apply(
-                lambda row: f"{row['Lesion Type']} ({row['LLU']:.3f})" if pd.notna(row['LLU']) else row['Lesion Type'],
+                lambda row: (
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
+                    if pd.notna(row['LLU'])
+                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
+                ),
                 axis=1
             )
         else:
-            roi_names = report_df['Lesion Type']
+            roi_names = report_df.apply(
+                lambda row: f"{int(row['Lesion Index'])} {row['Lesion Type']}",
+                axis=1
+            )
         
         labels_df = pd.DataFrame({
             'roi_id': report_df['Lesion Index'],
@@ -467,7 +488,11 @@ class MSXplainReport:
         # Filter out False Positive labels for DCM-SEG conversion
         # Use .str.startswith to handle both "False Positive" and "False Positive (uncertainty)"
         labels_df = labels_df[~labels_df['roi_name'].astype(str).str.startswith('False Positive')]
-        
+
+        # Remap roi_id to sequential 1-N so OHIF colour LUT is never out-of-range
+        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
+        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+
         labels_path = os.path.join(self.output_dir, "labels.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
         
@@ -505,19 +530,183 @@ class MSXplainReport:
         # Remove False Positive lesions by setting their voxels to 0
         for fp_index in false_positive_indices:
             filtered_data[lesion_data == fp_index] = 0
-        
+
+        # Remap remaining labels to sequential 1-N.
+        # OHIF Viewer indexes its colour LUT by SegmentNumber; gaps caused by
+        # removed FP lesions produce wrong colours for higher-numbered segments.
+        all_indices = set(report_df['Lesion Index'].tolist())
+        surviving_indices = sorted(all_indices - set(false_positive_indices))
+        remap = self._make_sequential_remap(surviving_indices)
+        remapped_data = np.zeros_like(filtered_data)
+        for old_id, new_id in remap.items():
+            remapped_data[filtered_data == old_id] = new_id
+
         # Create output path
         base_name = os.path.splitext(os.path.splitext(os.path.basename(lesion_map_path))[0])[0]
         output_path = os.path.join(self.output_dir, f"{base_name}{suffix}.nii.gz")
-        
-        # Create new image with filtered data
-        filtered_img = sitk.GetImageFromArray(filtered_data)
+
+        # Create new image with remapped data
+        filtered_img = sitk.GetImageFromArray(remapped_data)
         filtered_img.CopyInformation(lesion_img)
         
         # Save filtered lesion map
         sitk.WriteImage(filtered_img, output_path)
         
         return Path(output_path), True
+
+    def create_uncertainty_filtered_lesion_map(
+        self,
+        lesion_map_path: str,
+        report_df: pd.DataFrame,
+        uncertainty_threshold: float = 0.25,
+        suffix: str = "_uncertainty"
+    ) -> tuple:
+        """Create a lesion map containing only high-confidence (low uncertainty) lesions.
+
+        Keeps lesions whose LLU (Lesion-Level Uncertainty) is strictly below the
+        given threshold.  Lesions with LLU >= threshold, NaN/missing LLU, or
+        classified as False Positive are zeroed out.
+
+        Args:
+            lesion_map_path: Path to the labeled lesion map NIfTI file.
+            report_df: DataFrame produced by ``generate_lesion_report()``.
+            uncertainty_threshold: LLU cutoff — only lesions with
+                ``LLU < uncertainty_threshold`` are retained.  Clinically
+                validated default is 0.25.
+            suffix: Filename suffix appended before ``.nii.gz``.
+
+        Returns:
+            Tuple of (Path to the filtered NIfTI file, bool indicating whether
+            any lesions survived the filter — ``False`` means the file is
+            all-zero and DCM-SEG conversion should be skipped).
+        """
+        logger.info(
+            f"Filtering lesion map by uncertainty < {uncertainty_threshold} ..."
+        )
+
+        # Determine which lesion indices to *remove*
+        if 'LLU' not in report_df.columns:
+            logger.warning(
+                "LLU column not found in report — cannot filter by uncertainty"
+            )
+            return Path(lesion_map_path), False
+
+        # Keep only lesions that are NOT False Positive AND have LLU < threshold
+        high_confidence_mask = (
+            (report_df['Lesion Type'] != 'False Positive')
+            & (report_df['LLU'].notna())
+            & (report_df['LLU'] < uncertainty_threshold)
+        )
+        indices_to_keep = set(
+            report_df.loc[high_confidence_mask, 'Lesion Index'].tolist()
+        )
+        all_indices = set(report_df['Lesion Index'].tolist())
+        indices_to_remove = all_indices - indices_to_keep
+
+        logger.info(
+            f"Uncertainty filter: keeping {len(indices_to_keep)} lesions, "
+            f"removing {len(indices_to_remove)} "
+            f"(threshold={uncertainty_threshold})"
+        )
+
+        if not indices_to_keep:
+            logger.warning(
+                "No lesions survived the uncertainty filter — "
+                "skipping uncertainty DCM-SEG generation"
+            )
+            # Still write the file (all zeros) so the caller can decide
+            lesion_img = sitk.ReadImage(str(lesion_map_path))
+            filtered_data = sitk.GetArrayFromImage(lesion_img) * 0
+            base_name = os.path.splitext(
+                os.path.splitext(os.path.basename(str(lesion_map_path)))[0]
+            )[0]
+            output_path = os.path.join(
+                self.output_dir, f"{base_name}{suffix}.nii.gz"
+            )
+            filtered_img = sitk.GetImageFromArray(filtered_data)
+            filtered_img.CopyInformation(lesion_img)
+            sitk.WriteImage(filtered_img, output_path)
+            return Path(output_path), False
+
+        # Load the lesion map, zero-out removed indices, then remap surviving
+        # labels to sequential 1-N so OHIF colour LUT is never addressed
+        # out-of-range (gaps cause palette cycling → wrong colours).
+        lesion_img = sitk.ReadImage(str(lesion_map_path))
+        lesion_data = sitk.GetArrayFromImage(lesion_img)
+        filtered_data = lesion_data.copy()
+
+        for idx in indices_to_remove:
+            filtered_data[lesion_data == idx] = 0
+
+        remap = self._make_sequential_remap(list(indices_to_keep))
+        remapped_data = np.zeros_like(filtered_data)
+        for old_id, new_id in remap.items():
+            remapped_data[filtered_data == old_id] = new_id
+
+        # Write filtered map
+        base_name = os.path.splitext(
+            os.path.splitext(os.path.basename(str(lesion_map_path)))[0]
+        )[0]
+        output_path = os.path.join(
+            self.output_dir, f"{base_name}{suffix}.nii.gz"
+        )
+        filtered_img = sitk.GetImageFromArray(remapped_data)
+        filtered_img.CopyInformation(lesion_img)
+        sitk.WriteImage(filtered_img, output_path)
+
+        logger.info(
+            f"Uncertainty-filtered lesion map saved to {output_path}"
+        )
+        return Path(output_path), True
+
+    def compute_uncertainty_labels(
+        self, report_df: pd.DataFrame, uncertainty_threshold: float = 0.25
+    ) -> Path:
+        """Compute labels CSV for the uncertainty-filtered DCM-SEG.
+
+        Only includes lesions whose LLU is strictly below the threshold and
+        that are not False Positives.
+
+        Args:
+            report_df: Report DataFrame with LLU and Lesion Type columns.
+            uncertainty_threshold: LLU cutoff (same used for the map filter).
+
+        Returns:
+            Path to the ``labels_uncertainty.csv`` file.
+        """
+        if 'LLU' not in report_df.columns:
+            logger.warning("LLU column not present — returning empty labels")
+            labels_df = pd.DataFrame(columns=['roi_id', 'roi_name'])
+        else:
+            keep_mask = (
+                (report_df['Lesion Type'] != 'False Positive')
+                & (report_df['LLU'].notna())
+                & (report_df['LLU'] < uncertainty_threshold)
+            )
+            filtered_df = report_df[keep_mask]
+
+            roi_names = filtered_df.apply(
+                lambda row: (
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
+                    if pd.notna(row['LLU'])
+                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
+                ),
+                axis=1,
+            )
+            labels_df = pd.DataFrame({
+                'roi_id': filtered_df['Lesion Index'],
+                'roi_name': roi_names,
+            })
+
+        # Remap roi_id to sequential 1-N — must mirror the remapping done in
+        # create_uncertainty_filtered_lesion_map so SegmentNumbers match
+        # the NIfTI pixel values exactly.
+        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
+        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+
+        labels_path = os.path.join(self.output_dir, "labels_uncertainty.csv")
+        labels_df.to_csv(labels_path, index=False, header=False)
+        return Path(labels_path)
 
     def nifti_to_dcmseg(self, lesion_map, labels_path, dcm_ref, out_basename):
         """Convert NIFTI to DCM-SEG"""

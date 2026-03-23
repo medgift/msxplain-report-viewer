@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.2
 aiosignal==1.4.0
@@ -57,11 +58,11 @@ pytz==2025.2
 pyyaml==6.0.3
 scipy==1.16.3
 six==1.17.0
-sympy==1.13.1
-torch==2.5.1
-torchaudio==2.5.1
+sympy==1.13.3
+torch==2.7.0+cu128
+torchaudio==2.7.0+cu128
 torchmetrics==1.8.2
-torchvision==0.20.1
+torchvision==0.22.0+cu128
 tqdm==4.67.1
 typing-extensions==4.15.0
 tzdata==2025.3
