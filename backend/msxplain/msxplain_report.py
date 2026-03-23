@@ -120,7 +120,6 @@ class MSXplainReport:
         # Path to MSXplain resources
         self.msxplain_dir = Path(__file__).parent.absolute()
         self.model_checkpoint = str(self.msxplain_dir / "model" / "model_epoch_61.pth")
-        self.registration_params = str(self.msxplain_dir / "configs/Parameters_Rigid.txt")
         
         # Validate model file exists
         if not os.path.exists(self.model_checkpoint):
