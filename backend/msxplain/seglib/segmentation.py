@@ -624,8 +624,14 @@ class Segmentation():
             abbr = self.labels.get_abbreviation_from_roi_id(roi)
             name = self.labels.get_name_from_roi_id(roi)
             
-            # Extract base name (without uncertainty suffix) for color matching
+            # Extract lesion type for colour matching.
+            # Label format is "<orig_id> <Lesion Type> (<LLU>)" — strip the
+            # trailing " (<value>)" first, then the optional leading "<id> ".
             base_name_for_color = name.split(" (")[0] if " (" in name else name
+            # Remove a leading integer prefix, e.g. "7 Deep White Matter" → "Deep White Matter"
+            parts = base_name_for_color.split(" ", 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                base_name_for_color = parts[1]
             
             if base_name_for_color in label_names:
                 if base_name_for_color == label_names[0]:

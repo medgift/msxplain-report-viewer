@@ -668,7 +668,63 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 logger.info(f"Removing filtered file: {filtered_lesion_map_t1}")
                                 os.remove(filtered_lesion_map_t1)
                             
-                            # Upload lesion map outputs(DCM SEG) to Orthanc
+                            # ── Uncertainty-filtered DCM-SEG (high-confidence lesions only) ──
+                            # Generates parallel DICOM SEG files that contain ONLY lesions
+                            # with LLU < 0.25 (clinically validated threshold).
+                            try:
+                                uncertainty_labels_path = executor.submit(
+                                    msxplain.compute_uncertainty_labels, report_df, 0.25
+                                ).result()
+
+                                # Filter FLAIR-space lesion map by uncertainty
+                                unc_flair_map, unc_flair_has_lesions = executor.submit(
+                                    msxplain.create_uncertainty_filtered_lesion_map,
+                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_uncertainty"
+                                ).result()
+
+                                # Filter T1-space lesion map by uncertainty
+                                unc_t1_map, unc_t1_has_lesions = executor.submit(
+                                    msxplain.create_uncertainty_filtered_lesion_map,
+                                    lesion_map_path, report_df, 0.25, "_t1_uncertainty"
+                                ).result()
+
+                                # Convert to DCM-SEG only if at least one lesion survived
+                                if unc_flair_has_lesions:
+                                    logger.info("Converting uncertainty-filtered FLAIR label map to DCM SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        unc_flair_map, uncertainty_labels_path,
+                                        Path(flair_dir), "flair_uncertainty"
+                                    ).result()
+                                else:
+                                    logger.info("No high-confidence FLAIR lesions — skipping uncertainty DCM-SEG")
+
+                                if unc_t1_has_lesions:
+                                    logger.info("Converting uncertainty-filtered T1 label map to DCM SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        unc_t1_map, uncertainty_labels_path,
+                                        Path(t1_dir), "t1n_uncertainty"
+                                    ).result()
+                                else:
+                                    logger.info("No high-confidence T1 lesions — skipping uncertainty DCM-SEG")
+
+                                # Clean up intermediate uncertainty-filtered NIfTI files
+                                for unc_path in [unc_flair_map, unc_t1_map]:
+                                    if os.path.exists(unc_path):
+                                        os.remove(unc_path)
+                                if os.path.exists(uncertainty_labels_path):
+                                    os.remove(uncertainty_labels_path)
+
+                            except Exception as unc_e:
+                                logger.warning(
+                                    f"Uncertainty-filtered DCM-SEG generation failed "
+                                    f"(non-blocking): {unc_e}"
+                                )
+                                traceback.print_exc()
+
+                            # Upload ALL DCM-SEG outputs to Orthanc
+                            # (includes both original and uncertainty-filtered files)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time

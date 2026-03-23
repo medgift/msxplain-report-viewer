@@ -96,7 +96,9 @@ RUN git clone https://github.com/lasopablo/freesurfer-freesurfer-dev-mri_WMHsynt
     [ -f /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth ] && \
     [ $(stat -c%s /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth) -gt 1000000 ] || (echo "Error: Model file download failed or file too small" >&2; exit 1) && \
     sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
-    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1)
+    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1) && \
+    sed -i "s|torch.load(model_file, map_location=device)|torch.load(model_file, map_location=device, weights_only=False)|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
+    grep -q "weights_only=False" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py for weights_only." >&2; exit 1)
 
 # Set WMH-SynthSeg environment
 ENV WMHSYNTHSEG_HOME="/app/wmh_synthseg"
