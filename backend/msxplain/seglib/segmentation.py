@@ -616,24 +616,35 @@ class Segmentation():
             "Juxtacortical": [255, 102, 102],     # Light Red
             "Infratentorial": [0, 0, 139],         # Dark Blue
             "Deep White Matter": [173, 216, 230],     # Light Blue
+            "Default": [255, 255, 255],           # White for default
         }
         
         label_names = ["Periventricular", "Juxtacortical", "Infratentorial", "Deep White Matter"]
         for i, roi in enumerate(self.get_roi_ids()):
             abbr = self.labels.get_abbreviation_from_roi_id(roi)
             name = self.labels.get_name_from_roi_id(roi)
-            if name in label_names:
-                if name == label_names[0]:
+            
+            # Extract lesion type for colour matching.
+            # Label format is "<orig_id> <Lesion Type> (<LLU>)" — strip the
+            # trailing " (<value>)" first, then the optional leading "<id> ".
+            base_name_for_color = name.split(" (")[0] if " (" in name else name
+            # Remove a leading integer prefix, e.g. "7 Deep White Matter" → "Deep White Matter"
+            parts = base_name_for_color.split(" ", 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                base_name_for_color = parts[1]
+            
+            if base_name_for_color in label_names:
+                if base_name_for_color == label_names[0]:
                     color = label_to_rgb["Periventricular"]
-                elif name == label_names[1]:
+                elif base_name_for_color == label_names[1]:
                     color = label_to_rgb["Juxtacortical"]
-                elif name == label_names[2]:
+                elif base_name_for_color == label_names[2]:
                     color = label_to_rgb["Infratentorial"]
-                elif name == label_names[3]:
+                elif base_name_for_color == label_names[3]:
                     color = label_to_rgb["Deep White Matter"]
             
             else:    
-                color = label_to_rgb["Periventricular"]
+                color = label_to_rgb["Default"]
                 logger.warning(f"Label '{name}' not found in label_to_rgb mapping. Using default color.")
             
             segments.append(get_segment(roi, abbr, name, color))

@@ -2,7 +2,7 @@
 FROM antsx/ants:2.5.3 as ants-stage
 
 # Main application stage
-FROM python:3.8-slim
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -21,15 +21,14 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libeigen3-dev \
-    libinsighttoolkit4-dev \
     libfftw3-dev \
     libtiff5-dev \
     libfreetype6-dev \
     pkg-config \
     zlib1g-dev \
     libhdf5-dev \
-    libhdf5-cpp-103 \
-    libhdf5-103 \
+    libhdf5-hl-cpp-310 \
+    libhdf5-hl-310 \
     libopenjp2-7-dev \
     libcharls-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -97,7 +96,9 @@ RUN git clone https://github.com/lasopablo/freesurfer-freesurfer-dev-mri_WMHsynt
     [ -f /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth ] && \
     [ $(stat -c%s /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth) -gt 1000000 ] || (echo "Error: Model file download failed or file too small" >&2; exit 1) && \
     sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
-    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1)
+    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1) && \
+    sed -i "s|torch.load(model_file, map_location=device)|torch.load(model_file, map_location=device, weights_only=False)|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
+    grep -q "weights_only=False" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py for weights_only." >&2; exit 1)
 
 # Set WMH-SynthSeg environment
 ENV WMHSYNTHSEG_HOME="/app/wmh_synthseg"

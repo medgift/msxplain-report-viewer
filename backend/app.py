@@ -6,19 +6,19 @@ import time
 from fastapi import FastAPI, Response, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.background import BackgroundTasks
 import uvicorn
 import pandas as pd
 import nibabel as nib
 import numpy as np
-from io import BytesIO
 from PIL import Image
 import pydicom
+from io import BytesIO
 import requests
 from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
-from fastapi.background import BackgroundTasks
-from concurrent.futures import ThreadPoolExecutor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -92,15 +92,17 @@ def format_birth_date(date_str):
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
 async def get_report(run_id: str, patient_name: str, session: str):
     try:
-        # Construct the correct file path using run_id and session
-        file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session, f"report_{patient_name}_{session}.xlsx")
+        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
         
-        logger.debug(f"Looking for report at: {file_path}")
+        # Construct the correct file path using run_id and session
+        file_path = os.path.join(patient_dir, f"report.csv")
+        
+        logger.info(f"Looking for report at: {file_path}")
         
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Report file not found: {file_path}")
             
-        df = pd.read_excel(file_path)
+        df = pd.read_csv(file_path)
         
         # Initialize variables
         lesion_counts = df['Lesion Type'].value_counts().to_dict()
@@ -193,6 +195,44 @@ async def get_report(run_id: str, patient_name: str, session: str):
         else:
             dissemination_space = "Not fulfilled"
 
+        # Load uncertainty data from report.csv
+        uncertainty_data = {
+            "patient_uncertainty": None,
+            "lesion_type_uncertainties": {}
+        }
+        
+        try:
+            # Get patient-level uncertainty (PSU) from first row if available
+            if 'PSU' in df.columns and not df.empty:
+                psu_value = df['PSU'].iloc[0]
+                if pd.notna(psu_value):  # Check if not NaN
+                    uncertainty_data["patient_uncertainty"] = float(psu_value)
+                    logger.info(f"Loaded PSU: {uncertainty_data['patient_uncertainty']}")
+            
+            # Calculate average lesion-level uncertainty (LLU) for each lesion type
+            if 'LLU' in df.columns:
+                # Filter out False Positives for uncertainty calculation
+                true_lesions_df = df[df['Lesion Type'] != 'False Positive'].copy()
+                
+                # Group by lesion type and calculate mean LLU
+                for lesion_type in ['Periventricular', 'Juxtacortical', 'Infratentorial', 'Deep White Matter']:
+                    type_lesions = true_lesions_df[true_lesions_df['Lesion Type'] == lesion_type]
+                    if not type_lesions.empty and 'LLU' in type_lesions.columns:
+                        # Get non-NaN LLU values
+                        llu_values = type_lesions['LLU'].dropna()
+                        if not llu_values.empty:
+                            avg_llu = float(llu_values.mean())
+                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = avg_llu
+                            logger.debug(f"Average LLU for {lesion_type}: {avg_llu}")
+                        else:
+                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
+                    else:
+                        uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
+                        
+        except Exception as e:
+            logger.warning(f"Error loading uncertainty data from report: {str(e)}")
+            traceback.print_exc()
+
         # Format response
         report_data = {
             "lesions": {
@@ -209,7 +249,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_id": patient_id if patient_id else "Unknown",
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
             "patient_sex": patient_sex if patient_sex else "Unknown",
-            "study_instance_uid": study_instance_uid if study_instance_uid else None
+            "study_instance_uid": study_instance_uid if study_instance_uid else None,
+            "uncertainty": uncertainty_data
         }
         return report_data
     except Exception as e:
@@ -224,12 +265,12 @@ async def get_report(run_id: str, patient_name: str, session: str):
 async def get_total_lesions(run_id: str, patient_name: str):
     try:
         # Construct the correct path
-        report_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report_{patient_name}.xlsx")
+        report_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report.csv")
         
         if not os.path.exists(report_path):
                                 raise FileNotFoundError(f"Report file not found: {report_path}")
 
-        report_df = pd.read_excel(report_path)
+        report_df = pd.read_csv(report_path)
         
         # Count lesions by type
         lesion_counts = report_df['Lesion Type'].value_counts()
@@ -283,8 +324,8 @@ async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_p
         brain_data = brain_img.get_fdata()
         
         # Load the report file
-        report_path = os.path.join(base_path, f"report_{patient_name}.xlsx")
-        report_df = pd.read_excel(report_path)
+        report_path = os.path.join(base_path, f"report.csv")
+        report_df = pd.read_csv(report_path)
         
         if not all(os.path.exists(f) for f in [lesion_file_path, brain_file_path, report_path]):
             raise FileNotFoundError("One or more required files not found")
@@ -581,9 +622,6 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.compute_labels, report_df
                             ).result()
                             
-                            report_path = os.path.join(session_output_dir, f"report_{patient_dir}_{session}.xlsx")
-                            report_df.to_excel(report_path, index=False)
-                            
                             elapsed = time.time() - pipeline_start_time
                             logger.info(f"MSXplain pipeline and report generation completed in {format_elapsed_time(elapsed)}")
                             
@@ -602,17 +640,91 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
                             lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
-                            # Convert segmentation to DICOM-SEG
-                            logger.info("Converting NIFTI label maps to DCM SEG...")
+                            # Create filtered lesion maps (without False Positives) for DCM-SEG conversion
+                            filtered_lesion_map_flair, flair_was_filtered = executor.submit(
+                                msxplain.create_filtered_lesion_map, lesion_map_flair_space_path, report_df, "_flair_dcmseg"
+                            ).result()
+                            
+                            filtered_lesion_map_t1, t1_was_filtered = executor.submit(
+                                msxplain.create_filtered_lesion_map, lesion_map_path, report_df, "_t1_dcmseg"
+                            ).result()
+                            
+                            # Convert segmentation to DICOM-SEG using filtered lesion maps
+                            logger.info("Converting filtered NIFTI label maps to DCM SEG...")
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, lesion_map_flair_space_path, labels_path, Path(flair_dir), "flair"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_flair, labels_path, Path(flair_dir), "flair"
                             ).result()
                             
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, lesion_map_path, labels_path, Path(t1_dir), "t1n"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_t1, labels_path, Path(t1_dir), "t1n"
                             ).result()
                             
-                            # Upload lesion map outputs(DCM SEG) to Orthanc
+                            # Clean up intermediate filtered NIFTI files (only if they were created)
+                            logger.info("Cleaning up intermediate filtered NIFTI files...")
+                            if flair_was_filtered and os.path.exists(filtered_lesion_map_flair):
+                                logger.info(f"Removing filtered file: {filtered_lesion_map_flair}")
+                                os.remove(filtered_lesion_map_flair)
+                            if t1_was_filtered and os.path.exists(filtered_lesion_map_t1):
+                                logger.info(f"Removing filtered file: {filtered_lesion_map_t1}")
+                                os.remove(filtered_lesion_map_t1)
+                            
+                            # ── Uncertainty-filtered DCM-SEG (high-confidence lesions only) ──
+                            # Generates parallel DICOM SEG files that contain ONLY lesions
+                            # with LLU < 0.25 (clinically validated threshold).
+                            try:
+                                uncertainty_labels_path = executor.submit(
+                                    msxplain.compute_uncertainty_labels, report_df, 0.25
+                                ).result()
+
+                                # Filter FLAIR-space lesion map by uncertainty
+                                unc_flair_map, unc_flair_has_lesions = executor.submit(
+                                    msxplain.create_uncertainty_filtered_lesion_map,
+                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_uncertainty"
+                                ).result()
+
+                                # Filter T1-space lesion map by uncertainty
+                                unc_t1_map, unc_t1_has_lesions = executor.submit(
+                                    msxplain.create_uncertainty_filtered_lesion_map,
+                                    lesion_map_path, report_df, 0.25, "_t1_uncertainty"
+                                ).result()
+
+                                # Convert to DCM-SEG only if at least one lesion survived
+                                if unc_flair_has_lesions:
+                                    logger.info("Converting uncertainty-filtered FLAIR label map to DCM SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        unc_flair_map, uncertainty_labels_path,
+                                        Path(flair_dir), "flair_uncertainty"
+                                    ).result()
+                                else:
+                                    logger.info("No high-confidence FLAIR lesions — skipping uncertainty DCM-SEG")
+
+                                if unc_t1_has_lesions:
+                                    logger.info("Converting uncertainty-filtered T1 label map to DCM SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        unc_t1_map, uncertainty_labels_path,
+                                        Path(t1_dir), "t1n_uncertainty"
+                                    ).result()
+                                else:
+                                    logger.info("No high-confidence T1 lesions — skipping uncertainty DCM-SEG")
+
+                                # Clean up intermediate uncertainty-filtered NIfTI files
+                                for unc_path in [unc_flair_map, unc_t1_map]:
+                                    if os.path.exists(unc_path):
+                                        os.remove(unc_path)
+                                if os.path.exists(uncertainty_labels_path):
+                                    os.remove(uncertainty_labels_path)
+
+                            except Exception as unc_e:
+                                logger.warning(
+                                    f"Uncertainty-filtered DCM-SEG generation failed "
+                                    f"(non-blocking): {unc_e}"
+                                )
+                                traceback.print_exc()
+
+                            # Upload ALL DCM-SEG outputs to Orthanc
+                            # (includes both original and uncertainty-filtered files)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time
@@ -746,7 +858,7 @@ async def get_processed_runs():
                     session_statuses = []
                     for session in sessions:
                         session_path = os.path.join(patient_path, session)
-                        report_path = os.path.join(session_path, f"report_{patient_dir}_{session}.xlsx")
+                        report_path = os.path.join(session_path, f"report.csv")
                         
                         # Check if session is in processing status
                         run_status = processing_status.get(run_id, {}).get('patients', {}).get(patient_dir, {})
