@@ -230,7 +230,7 @@ const ReportPage = () => {
                     <p>Not available</p>
                   </div>
                 </div>
-                <p className="highlight">*Intracortical , spinal cord and optic nerve lessions are not assesed. If Not fulfilled, its only taking into account whithe matter lesions.</p>
+                <p className="highlight">*Intracortical, spinal cord, and optic nerve lesions are not assessed. If the criterion is not fulfilled, only white matter lesions are taken into account.</p>
               </div>
 
               <div className="subsection">
