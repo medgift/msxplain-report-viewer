@@ -1,4 +1,0 @@
-paths:
-  fsl_dir: "/path/to/fsl"
-  freesurfer_home: "/path/to/freesurfer"
-  ants_dir: "/path/to/ANTs"
