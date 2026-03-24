@@ -91,8 +91,6 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                     )
                     
                     if is_segmentation:
-                        logger.info(f"Found existing segmentation series: {series_uid}")
-                        
                         # Delete this series
                         delete_url = f"{orthanc_url}/series/{series_uid}"
                         delete_response = requests.delete(delete_url)
