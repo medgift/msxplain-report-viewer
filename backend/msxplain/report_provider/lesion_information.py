@@ -82,11 +82,9 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
         # Calculate unit volume
         unit_volume = np.asarray(mask_proxy.header['pixdim'][1:4]).prod()
 
-        # Create DataFrame
-        df = pd.DataFrame(columns=[
-            'ID', 'Lesion Count', 'Lesion Type', 'Lesion Index',
-            'Lesion Center', 'Lesion Voxels', 'Lesion Volume', 'LLU', 'PSU', 'Note'
-        ])
+        # Collect rows as list of dicts, then build DataFrame in one shot
+        # to avoid deprecated row-by-row concat with empty/all-NA columns
+        rows: list[dict] = []
 
         # Get lesion map and prune small lesions
         label_map = get_lesion_types_masks(mask_data, mask_data, 'non_zero', n_jobs=1)['TPL']
@@ -166,14 +164,22 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
                 lesion_number = None
                 psu_value = None
 
-            # Add to DataFrame
-            df.loc[n] = [
-                patient_id, lesion_number, lesion_type, label_idx_in_label_map,
-                com, num_voxel, num_voxel*unit_volume, LLU, psu_value, note
-            ]
+            # Collect row
+            rows.append({
+                'ID': patient_id,
+                'Lesion Count': lesion_number,
+                'Lesion Type': lesion_type,
+                'Lesion Index': label_idx_in_label_map,
+                'Lesion Center': com,
+                'Lesion Voxels': num_voxel,
+                'Lesion Volume': num_voxel * unit_volume,
+                'LLU': LLU,
+                'PSU': psu_value,
+                'Note': note,
+            })
 
-        # Sort and save results
-        df = df.sort_values(by=['Lesion Index'])
+        # Build DataFrame in one shot and sort
+        df = pd.DataFrame(rows).sort_values(by=['Lesion Index']).reset_index(drop=True)
             
         return df
         

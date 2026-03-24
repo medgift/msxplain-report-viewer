@@ -214,6 +214,12 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     accelerator = "gpu"
     device = 1
+
+    # Seed RNGs for reproducibility (given identical inputs)
+    seed = 42
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
     
     # Setup paths
@@ -224,8 +230,8 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
     
     post_thr = 4  # More than 3 voxels
     
-    # Find model checkpoints
-    ckpt_files = list(models_path.glob("*.ckpt"))
+    # Find model checkpoints (sorted for deterministic ordering across runs)
+    ckpt_files = sorted(models_path.glob("*.ckpt"), key=lambda p: p.name)
     
     if len(ckpt_files) == 0:
         raise ValueError(f"No .ckpt files found in {models_path}")

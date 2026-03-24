@@ -35,9 +35,13 @@ def intersection_over_union(mask1, mask2):
         mask2 (np.ndarray): Second binary mask (must have same dimensions as mask1)
     
     Returns:
-        float: Intersection over Union value
+        float: Intersection over Union value (1.0 when both masks are empty)
     """
-    return np.sum(mask1 * mask2) / np.sum(mask1 + mask2 - mask1 * mask2)
+    intersection = np.sum(mask1 * mask2)
+    union = np.sum(mask1 + mask2 - mask1 * mask2)
+    if union == 0:
+        return 1.0
+    return intersection / union
 
 
 def entropy_of_expected(probs, epsilon=1e-10):
