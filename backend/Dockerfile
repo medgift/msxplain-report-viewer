@@ -116,7 +116,7 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p files/uploads files/processed 
 
-# IMPORTANT: Ensure system uses Python 3.8 
+# IMPORTANT: Ensure system uses Python 3.11
 ENV PATH="/usr/local/bin:${PATH}"
 
 # Create a non-root user to run the application
