@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import time
-from fastapi import FastAPI, Response, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.background import BackgroundTasks
@@ -11,9 +11,7 @@ import uvicorn
 import pandas as pd
 import nibabel as nib
 import numpy as np
-from PIL import Image
 import pydicom
-from io import BytesIO
 import requests
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
@@ -261,177 +259,7 @@ async def get_report(run_id: str, patient_name: str, session: str):
             status_code=500
         )
 
-@app.get("/api/total_lesions/{run_id}/{patient_name}")
-async def get_total_lesions(run_id: str, patient_name: str):
-    try:
-        # Construct the correct path
-        report_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, f"report.csv")
-        
-        if not os.path.exists(report_path):
-                                raise FileNotFoundError(f"Report file not found: {report_path}")
 
-        report_df = pd.read_csv(report_path)
-        
-        # Count lesions by type
-        lesion_counts = report_df['Lesion Type'].value_counts()
-        
-        # Get false positives count
-        false_positives = len(report_df[report_df['Lesion Type'] == 'False Positive'])
-        
-        # Get true lesions count (all lesions except false positives)
-        true_lesions = len(report_df[report_df['Lesion Type'] != 'False Positive'])
-        
-        logger.debug("Lesion counts from report:")
-        logger.debug(lesion_counts)
-        logger.debug(f"True lesions: {true_lesions}")
-        logger.debug(f"False positives: {false_positives}")
-        
-        return {
-            "total_lesions": len(report_df),
-            "true_lesions": true_lesions,
-            "false_positives": false_positives,
-            "lesion_types": lesion_counts.to_dict()
-        }
-    except Exception as e:
-        logger.error(f"Error getting lesion counts: {str(e)}")
-        traceback.print_exc()
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
-        
-        
-def hex_to_rgb(hex):
-  return tuple(int(hex[i:i+2], 16) for i in (0, 2, 4))
-
-hex_to_rgb('FFA501') # (255, 165, 1)
-
-@app.get("/api/slice/{run_id}/{patient_name}/{slice_num}")
-async def get_slice(run_id: str, patient_name: str, slice_num: int, show_false_positives: bool = False):
-    try:
-        # Construct the correct path            
-        base_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name)
-
-        if not os.path.exists(base_path):
-            raise FileNotFoundError(f"Patient directory not found: {base_path}")
-        
-        # Load the lesion and brain images
-        lesion_file_path = os.path.join(base_path, "lesion_map.nii.gz")
-        brain_file_path = os.path.join(base_path, "flair_registered.nii.gz")
-        lesion_img = nib.load(lesion_file_path)
-        brain_img = nib.load(brain_file_path)
-        lesion_data = lesion_img.get_fdata()
-        brain_data = brain_img.get_fdata()
-        
-        # Load the report file
-        report_path = os.path.join(base_path, f"report.csv")
-        report_df = pd.read_csv(report_path)
-        
-        if not all(os.path.exists(f) for f in [lesion_file_path, brain_file_path, report_path]):
-            raise FileNotFoundError("One or more required files not found")
-        
-        # Get the requested slices
-        lesion_slice = lesion_data[:, :, slice_num]
-        brain_slice = brain_data[:, :, slice_num]
-        
-        # Rotate and flip
-        lesion_slice = np.flip(np.rot90(lesion_slice), axis=1)
-        brain_slice = np.flip(np.rot90(brain_slice), axis=1)
-        
-        logger.debug(f"Slice {slice_num} information:")
-        logger.debug(f"  Shape after rotation: {lesion_slice.shape}")
-        logger.debug(f"  Lesion values: {np.unique(lesion_slice)}")
-        logger.debug(f"  Brain range: [{brain_slice.min()}, {brain_slice.max()}]")
-        
-        # Define colors for each lesion type
-        lesion_type_colors = {
-                'Deep White Matter': hex_to_rgb('880808'), # Red
-                'Juxtacortical': hex_to_rgb('F88379'), # CoralPink
-                'Periventricular': hex_to_rgb('0000FF'), # Blue
-                'Infratentorial': hex_to_rgb('00FFFF'), # Aqua
-                'False Positive': hex_to_rgb('808080')  # Gray
-        }
-        
-        # Create RGBA image with brain background
-        colored_slice = np.zeros((*lesion_slice.shape, 4), dtype=np.uint8)
-        
-        # Normalize and set brain background
-        brain_normalized = ((brain_slice - brain_slice.min()) / 
-                          (brain_slice.max() - brain_slice.min() + 1e-8) * 255).astype(np.uint8)
-        
-        colored_slice[:, :, 0] = brain_normalized
-        colored_slice[:, :, 1] = brain_normalized
-        colored_slice[:, :, 2] = brain_normalized
-        colored_slice[:, :, 3] = 255
-        
-        # Get unique lesion values in this slice
-        unique_lesions = np.unique(lesion_slice)
-        unique_lesions = unique_lesions[unique_lesions > 0.01]
-        
-        if len(unique_lesions) > 0:
-            logger.debug(f"Found {len(unique_lesions)} lesions in slice {slice_num}")
-            logger.debug(f"Show false positives mode: {show_false_positives}")
-            
-            for lesion_value in unique_lesions:
-                # Find this lesion in the report using Lesion Index
-                lesion_info = report_df[report_df['Lesion Index'] == lesion_value]
-                
-                if not lesion_info.empty:
-                    lesion_type = lesion_info['Lesion Type'].iloc[0]
-                    is_false_positive = lesion_type == 'False Positive'
-                    
-                    # Skip lesions based on view mode
-                    if show_false_positives:
-                        # In false positive mode, only show false positives
-                        if not is_false_positive:
-                            logger.debug(f"  Skipping non-false positive lesion {lesion_value}")
-                            continue
-                    else:
-                        # In normal mode, skip false positives
-                        if is_false_positive:
-                            logger.debug(f"  Skipping false positive lesion {lesion_value}")
-                            continue
-                    
-                    # Create mask for this lesion
-                    lesion_mask = (np.abs(lesion_slice - lesion_value) < 0.5)
-                    
-                    # Get color based on lesion type
-                    color = lesion_type_colors[lesion_type]
-                    
-                    # Set transparency
-                    alpha = 150 if is_false_positive else 200
-                    
-                    # Apply color to the lesion
-                    colored_slice[lesion_mask] = [*color, alpha]
-                    
-                    logger.debug(f"  Showing lesion {lesion_value}: type={lesion_type}, is_false_positive={is_false_positive}")
-        
-        # Convert to PIL Image and return
-        slice_img = Image.fromarray(colored_slice, mode='RGBA')
-        slice_img = slice_img.resize((slice_img.size[0] * 2, slice_img.size[1] * 2), Image.NEAREST)
-        
-        byte_io = BytesIO()
-        slice_img.save(byte_io, format='PNG')
-        byte_io.seek(0)
-        
-        return Response(
-            content=byte_io.getvalue(),
-            media_type="image/png",
-            headers={
-                "Content-Disposition": "inline",
-                "filename": f"slice_{slice_num}.png",
-                "X-Total-Slices": str(lesion_data.shape[2])
-            }
-        )
-    
-    except Exception as e:
-        logger.error(f"Error processing slice: {str(e)}")
-        traceback.print_exc()
-        return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
-        )
-        
 @app.post("/api/upload-dicoms")
 async def upload_dicoms(files: List[UploadFile] = File(...), run_id: str = None):
     try:

@@ -9,12 +9,13 @@ A web-based application for processing and viewing Multiple Sclerosis (MS) brain
 - **v2.0**: Incorporation of the MSReport Provider Pipeline (Preprocessing, MSXplain Report Provider, Report generator). A new upload page allows users to upload folders containing multiple patients following the required structure: Folder/Patients/Session/Images (T1 and FLAIR).
 - **v3.0**: Complete incorporation of Report Provider with skull stripping, updating the model, converting the lesion_map to dicom_seg, and registering to flair space. Start the incorporation of the OHIF Viewer + Orthanc.
 - **v4.0**: Fully dockerized application with complete integration of OHIF Viewer and Orthanc PACS. All components run in Docker containers with proper user permissions. Image registration now uses ANTs tools instead of elastix for improved performance and consistency.
+- **v5.0**: Replaced FreeSurfer/SAMSEG parcellation with WMH-SynthSeg for faster and lighter brain structure segmentation. Added SwinUNETR ensemble inference (5 models) with voxel-level, lesion-level (LLU), and patient-level (PSU) uncertainty quantification. Uncertainty-filtered DICOM-SEG exports (LLU < 0.25 threshold). Upgraded to Python 3.11, PyTorch 2.7 (CUDA 12.8), pytorch-lightning 2.6, and MONAI 1.4. Built dcm2niix from source with JPEG 2000 and JPEG-LS support. False Positive lesions are now excluded from DICOM-SEG exports while remaining visible in the web report.
 
 ### Repository Structure
 ```
 .
-├── backend/              # Flask API server with MSXplain processing pipeline
-│   ├── app.py           # Main Flask application
+├── backend/              # FastAPI server with MSXplain processing pipeline
+│   ├── app.py           # Main FastAPI application
 │   ├── msxplain/        # MSXplain report provider modules
 │   ├── files/           # Data directory (uploads, processed)
 │   └── hd_bet_models/   # Brain extraction models
@@ -32,7 +33,6 @@ A web-based application for processing and viewing Multiple Sclerosis (MS) brain
 - **For GPU Support (Optional but Recommended):**
   - NVIDIA GPU with compatible drivers
   - NVIDIA Docker runtime installed (see section 4.3 below for installation)
-- FreeSurfer license file (if using FreeSurfer functionality)
 - At least 8GB RAM (16GB recommended)
 - 50GB+ free disk space for processing data
 
@@ -43,26 +43,12 @@ A web-based application for processing and viewing Multiple Sclerosis (MS) brain
 The backend Docker image includes the following neuroimaging tools using **official Docker images** for optimal performance:
 
 1. **FSL 6.0.7.4** - FMRIB Software Library for brain imaging analysis
-2. **FreeSurfer 7.4.1** - Cortical reconstruction and volumetric segmentation *(from official `freesurfer/freesurfer:7.4.1`)*
-3. **ANTs 2.6.2** - Advanced Normalization Tools for image registration and transformation *(from official `antsx/ants:2.6.2`)*
-4. **dcm2niix** - DICOM to NIfTI conversion
-5. **HD-BET** - Brain extraction tool
+2. **WMH-SynthSeg** - White matter hyperintensity and brain structure segmentation (replaces FreeSurfer/SAMSEG)
+3. **ANTs 2.5.3** - Advanced Normalization Tools for image registration and transformation *(from official `antsx/ants:2.5.3`)*
+4. **dcm2niix** - DICOM to NIfTI conversion (built from source with JPEG 2000 and JPEG-LS support)
+5. **HD-BET 1.1** - Brain extraction tool
 
-### 3.2 FreeSurfer License (Required if using FreeSurfer)
-
-FreeSurfer requires a valid license file. You can obtain one for free from:
-https://surfer.nmr.mgh.harvard.edu/registration.html
-
-Once you have the license file:
-
-1. Place it in the project root as `freesurfer_license.txt`
-2. Uncomment the license volume mount in `docker-compose.yml`:
-   ```yaml
-   volumes:
-     - ./freesurfer_license.txt:/opt/freesurfer/license.txt:ro
-   ```
-
-### 3.3 Environment Configuration
+### 3.2 Environment Configuration
 
 **Important**: The application runs as the user specified in the `.env` file. This ensures that all files created by the Docker containers have the correct permissions and can be accessed by your host user.
 
@@ -104,13 +90,13 @@ CORS_ORIGINS=*              # For development: allow all origins
 # CORS_ORIGINS=http://your-server:3001  # For production: specify exact origins
 ```
 
-### 3.4 Required Files and Directories
+### 3.3 Required Files and Directories
 
 Before building, ensure these files are in place:
 
 **Backend:**
-- `backend/msxplain/model/*` - MSXplain model files
-- `backend/secrets/*` - License files and credentials
+- `backend/msxplain/model/*` - MSXplain UNet model weights
+- `backend/msxplain/ensemble_models/*` - SwinUNETR ensemble checkpoints (5 models)
 - `backend/hd_bet_models/*` - Brain extraction models
 
 **Frontend:**
@@ -124,7 +110,7 @@ mkdir -p backend/files/processed
 
 **Important**: These directories will be owned by the user specified in `.env` (UID:GID), ensuring proper permissions.
 
-### 3.5 Starting the Application
+### 3.4 Starting the Application
 
 ```bash
 # Build and start all services
@@ -137,7 +123,7 @@ docker compose logs -f
 docker compose down
 ```
 
-### 3.6 Accessing the Application
+### 3.5 Accessing the Application
 
 Once running, access these services:
 - **Frontend Web UI**: http://localhost:3001 (or http://YOUR_SERVER_IP:3001)
@@ -163,10 +149,10 @@ The entire MSXplain application runs in Docker containers, providing:
 
 **Container Services:**
 
-1. **msxplain_backend** (Flask + Python)
+1. **msxplain_backend** (FastAPI + Python)
    - Runs as user `UID:GID` specified in `.env`
    - Processes MRI scans using neuroimaging tools
-   - Includes: FSL, FreeSurfer, ANTs, HD-BET, PyTorch
+   - Includes: FSL, WMH-SynthSeg, ANTs, HD-BET, PyTorch
    - GPU-enabled (optional) for faster processing
    - Data persisted in `./backend/files` volume
 
@@ -213,9 +199,8 @@ docker compose build --no-cache msxplain_frontend
 **Note**: The Docker images are already GPU-ready with CUDA libraries. You only need to install NVIDIA Docker runtime on your host computer to enable GPU passthrough to containers.
 
 **What's already in the Docker images:**
-- ✅ CUDA 11.7 runtime libraries
-- ✅ cuDNN 8.5 for deep learning
-- ✅ GPU-enabled PyTorch and MONAI
+- ✅ CUDA 12.8 runtime libraries (via PyTorch)
+- ✅ GPU-enabled PyTorch 2.7 and MONAI 1.4
 - ✅ All necessary CUDA dependencies
 
 **Requirements on your host computer:**
@@ -259,7 +244,7 @@ The dockerized application uses environment variables instead of configuration f
 **Environment variables set in backend container:**
 - `FSLDIR=/usr/share/fsl` - FSL installation directory
 - `FSLOUTPUTTYPE=NIFTI_GZ` - FSL output format
-- `FREESURFER_HOME=/usr/local/freesurfer` - FreeSurfer installation directory
+- `WMHSYNTHSEG_HOME=/app/wmh_synthseg` - WMH-SynthSeg installation directory
 - `ANTSPATH=/opt/ants/bin` - ANTs binaries directory
 - `ORTHANC_URL=http://orthanc:8042` - Orthanc PACS server URL
 - `PYTHONPATH=/app` - Python module path
@@ -315,8 +300,8 @@ This ensures:
 
 2. **Verify required files exist:**
    - `backend/msxplain/model/*`
+   - `backend/msxplain/ensemble_models/*`
    - `backend/hd_bet_models/*`
-   - `backend/secrets/license.txt` (if using licensed features)
 
 3. **Check GPU access (if using GPU):**
    ```bash
@@ -353,26 +338,6 @@ docker info | grep Memory
 # Increase memory in Docker Desktop settings if needed
 ```
 
-### FreeSurfer License Issues
-
-If FreeSurfer processing fails:
-
-1. **Check license file is mounted:**
-   ```bash
-   docker exec msxplain_backend cat /opt/freesurfer/license.txt
-   ```
-
-2. **Verify license is valid:**
-   - Check expiration date
-   - Ensure file has correct format
-   - Check file permissions (should be readable)
-
-3. **Verify volume mount in docker-compose.yml:**
-   ```yaml
-   volumes:
-     - ./freesurfer_license.txt:/opt/freesurfer/license.txt:ro
-   ```
-
 ### GPU Not Available
 
 If GPU processing fails:
@@ -408,8 +373,8 @@ DOCKER_BUILDKIT=1 docker compose build --progress=plain
 ### File Structure for Docker Build
 
 **Backend requirements:**
-- `msxplain/model/*` - Model weights and configurations
-- `secrets/*` - License files and API keys
+- `msxplain/model/*` - UNet model weights and configurations
+- `msxplain/ensemble_models/*` - SwinUNETR ensemble checkpoints (5 seeds)
 - `hd_bet_models/*` - Pre-trained brain extraction models
 
 **Frontend requirements:**
@@ -455,9 +420,8 @@ After changing configuration files:
 - **Report_template_USB.pdf** - Report template documentation
 - **docker-compose.yml** - Docker services configuration
 - **.env.example** - Environment configuration template
-- **backend/config.yml.example** - Legacy configuration (pre-v4.0, not used in Docker)
 
-**Note**: Since v4.0, all configuration is done via Docker environment variables and the `.env` file. The `config.yml` file is no longer used.
+**Note**: Since v4.0, all configuration is done via Docker environment variables and the `.env` file. The `config.yml` file is no longer used. Since v5.0, FreeSurfer is no longer required — parcellation is handled by WMH-SynthSeg.
 
 ## 8. Support
 
