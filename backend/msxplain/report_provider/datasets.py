@@ -7,6 +7,8 @@ from glob import glob
 import re
 import logging
 
+logger = logging.getLogger(__name__)
+
 def check_dataset(filepaths_list, prefixes):
     """Check that there are equal amounts of files in both lists and
     the names before prefices are similar for each of the matched pairs of
@@ -147,7 +149,7 @@ class NiftiCLWMLDataset(CacheDataset):
         modality_names = input_names + ["targets", "targets_cl", "targets_wml"]
         check_dataset(to_check_filepaths, to_check_prefix)
 
-        logging.info(f"Initializing the dataset. Number of subjects {len(self.target_filepaths)}")
+        logger.info(f"Initializing the dataset. Number of subjects {len(self.target_filepaths)}")
 
         self.files = [dict(zip(modality_names, files)) for files in list(zip(*to_check_filepaths))]
 
@@ -188,7 +190,7 @@ class PredictedCLWMLDataset(CacheDataset):
         modality_names = ["targets", "outputs", "targets_cl", "targets_wml"]
         check_dataset(to_check_filepaths, to_check_prefix)
 
-        logging.info(f"Initializing the dataset. Number of subjects {len(self.target_filepaths)}")
+        logger.info(f"Initializing the dataset. Number of subjects {len(self.target_filepaths)}")
 
         self.files = [dict(zip(modality_names, files)) for files in list(zip(*to_check_filepaths))]
 

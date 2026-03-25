@@ -1,7 +1,16 @@
 ## Backend ##
 files/*
+!files/.gitkeep
+!files/uploads/
+!files/processed/
+files/uploads/*
+!files/uploads/.gitkeep
+files/processed/*
+!files/processed/.gitkeep
 msxplain/model/*
-config.yml
-secrets/*
+!msxplain/model/.gitkeep
+msxplain/ensemble_models/*
+!msxplain/ensemble_models/.gitkeep
 hd_bet_models/*
+!hd_bet_models/.gitkeep
 

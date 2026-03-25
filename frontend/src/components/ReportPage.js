@@ -39,7 +39,7 @@ const ReportPage = () => {
   }, [run_id, patient_name, session]);  // Add session to dependency array
 
   const openMcDonaldCriteria = () => {
-    window.open('/files/2017-McDonald-Criteria-PDF.pdf', '_blank');
+    window.open('https://www.thelancet.com/article/S1474-4422(25)00270-4/fulltext#', '_blank', 'noopener,noreferrer');
   };
 
   const openOHIFViewer = () => {
@@ -105,6 +105,83 @@ const ReportPage = () => {
                 <p><strong>Sex:</strong> {reportData.patient_sex}</p>
               </div>
               
+              {/* Uncertainty Section */}
+              {reportData.uncertainty && reportData.uncertainty.patient_uncertainty !== null && (
+                <div className="uncertainty-section">
+                  <h3>Prediction Uncertainty</h3>
+                  <div className="uncertainty-container-2col">
+                    {/* Left Column: Uncertainty Values */}
+                    <div className="uncertainty-left-column">
+                      <div className="uncertainty-main">
+                        <div className="uncertainty-value-card">
+                          <span className="uncertainty-label">Patient-Level Uncertainty (PSU)</span>
+                          <span className="uncertainty-value">
+                            {(reportData.uncertainty.patient_uncertainty * 100).toFixed(1)}%
+                          </span>
+                          <span className="uncertainty-description">
+                            {reportData.uncertainty.patient_uncertainty < 0.2 ? 'Low uncertainty - High confidence' : 
+                             reportData.uncertainty.patient_uncertainty < 0.4 ? 'Moderate uncertainty' : 
+                             'High uncertainty - Review recommended'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Lesion Type Uncertainties */}
+                      {Object.keys(reportData.uncertainty.lesion_type_uncertainties).some(
+                        key => reportData.uncertainty.lesion_type_uncertainties[key] !== null
+                      ) && (
+                        <div className="uncertainty-details">
+                          <h4>Average Uncertainty by Lesion Type</h4>
+                          <div className="uncertainty-lesion-types">
+                            {reportData.uncertainty.lesion_type_uncertainties['Periventricular'] !== null && (
+                              <div className="uncertainty-type-item">
+                                <span className="type-label">Periventricular:</span>
+                                <span className="type-value">
+                                  {(reportData.uncertainty.lesion_type_uncertainties['Periventricular'] * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                            {reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] !== null && (
+                              <div className="uncertainty-type-item">
+                                <span className="type-label">Juxtacortical:</span>
+                                <span className="type-value">
+                                  {(reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                            {reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] !== null && (
+                              <div className="uncertainty-type-item">
+                                <span className="type-label">Infratentorial:</span>
+                                <span className="type-value">
+                                  {(reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                            {reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] !== null && (
+                              <div className="uncertainty-type-item">
+                                <span className="type-label">Deep White Matter:</span>
+                                <span className="type-value">
+                                  {(reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right Column: Histogram Placeholder */}
+                    <div className="uncertainty-right-column">
+                      <div className="histogram-placeholder">
+                        <div className="histogram-icon">📊</div>
+                        <p>Uncertainty Distribution Histogram</p>
+                        <span className="placeholder-text">Image placeholder</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               <h2>Automated Analysis</h2>
               
               <div className="subsection">
@@ -114,7 +191,7 @@ const ReportPage = () => {
 
               <div className="subsection findings-section">
                 <h3>Findings</h3>
-                {/* <p className="highlight">False positives of MSXplain: {reportData.lesions.false_positive}</p> */}
+                <p className="highlight">False positives of MSXplain: {reportData.lesions.false_positive}</p>
                 
                 <div className="lesion-stats">
                   <div className="stat-card">
@@ -144,7 +221,7 @@ const ReportPage = () => {
                 <h4>McDonald Criteria</h4>
                 <div className="criteria-cards">
                   <div className="criteria-card">
-                    <h5>Dissemination in Space (DIS)</h5>
+                    <h5>Dissemination in Space (DIS)*</h5>
                     <p>{reportData.dissemination_space}</p>
                   </div>
                   <div className="criteria-card">
@@ -153,6 +230,7 @@ const ReportPage = () => {
                     <p>Not available</p>
                   </div>
                 </div>
+                <p className="highlight">*Intracortical, spinal cord, and optic nerve lesions are not assessed. If the criterion is not fulfilled, only white matter lesions are taken into account.</p>
               </div>
 
               <div className="subsection">

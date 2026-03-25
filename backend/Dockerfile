@@ -1,9 +1,8 @@
 # Multi-stage build using official neuroimaging images
-FROM freesurfer/freesurfer:7.4.1 as freesurfer-stage
 FROM antsx/ants:2.5.3 as ants-stage
 
 # Main application stage
-FROM python:3.8-slim
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -22,19 +21,27 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libeigen3-dev \
-    libinsighttoolkit4-dev \
     libfftw3-dev \
     libtiff5-dev \
     libfreetype6-dev \
     pkg-config \
     zlib1g-dev \
     libhdf5-dev \
-    libhdf5-cpp-103 \
-    libhdf5-103 \
+    libhdf5-hl-cpp-310 \
+    libhdf5-hl-310 \
+    libopenjp2-7-dev \
+    libcharls-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dcm2niix
-RUN apt-get update && apt-get install -y dcm2niix && rm -rf /var/lib/apt/lists/*
+# Build dcm2niix from source with JPEG 2000 and JPEG-LS support
+# Using commit SHA for v1.0.20250506 to ensure immutable, reproducible builds
+RUN git clone https://github.com/rordenlab/dcm2niix.git /tmp/dcm2niix && \
+    cd /tmp/dcm2niix && \
+    git checkout f6d7a00 && \
+    mkdir build && cd build && \
+    cmake -DUSE_OPENJPEG=ON -DUSE_JPEGLS=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && make install && \
+    cd / && rm -rf /tmp/dcm2niix
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
@@ -77,11 +84,26 @@ COPY --from=ants-stage /opt/ants /opt/ants
 RUN cp -r /opt/ants/lib/* /usr/local/lib/ 2>/dev/null || true && \
     ldconfig
 
+# Install WMH-SynthSeg (replaces FreeSurfer)
+# Pin to specific commit for reproducibility and security
+RUN git clone https://github.com/lasopablo/freesurfer-freesurfer-dev-mri_WMHsynthseg.git /app/wmh_synthseg && \
+    cd /app/wmh_synthseg && \
+    git checkout 2bf9a421f9707142a83db575ac0f3fa9a2d2631c && \
+    cd / && \
+    mkdir -p /app/wmh_synthseg/models && \
+    wget -O /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth https://ftp.nmr.mgh.harvard.edu/pub/dist/lcnpublic/dist/WMH-SynthSeg/WMH-SynthSeg_v10_231110.pth && \
+    echo "Verifying model file size..." && \
+    [ -f /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth ] && \
+    [ $(stat -c%s /app/wmh_synthseg/models/WMH-SynthSeg_v10_231110.pth) -gt 1000000 ] || (echo "Error: Model file download failed or file too small" >&2; exit 1) && \
+    sed -i "s|os.path.join('/app/models'|os.path.join('/app/wmh_synthseg/models'|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
+    grep -q "os.path.join('/app/wmh_synthseg/models'" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py; path pattern not found." >&2; exit 1) && \
+    sed -i "s|torch.load(model_file, map_location=device)|torch.load(model_file, map_location=device, weights_only=False)|g" /app/wmh_synthseg/WMHSynthSeg/inference.py && \
+    grep -q "weights_only=False" /app/wmh_synthseg/WMHSynthSeg/inference.py || (echo "Error: Failed to patch WMHSynthSeg inference.py for weights_only." >&2; exit 1)
 
-# Copy FreeSurfer from official image (correct path: /usr/local/freesurfer)
-ENV FREESURFER_HOME="/usr/local/freesurfer"
-ENV PATH="${FREESURFER_HOME}/bin:${PATH}"
-COPY --from=freesurfer-stage /usr/local/freesurfer /usr/local/freesurfer
+# Set WMH-SynthSeg environment
+ENV WMHSYNTHSEG_HOME="/app/wmh_synthseg"
+ENV PATH="${WMHSYNTHSEG_HOME}:${PATH}"
+ENV PYTHONPATH="${WMHSYNTHSEG_HOME}:${PYTHONPATH}"
 
 # Install elastix from package manager instead of binary download
 # RUN apt-get update && apt-get install -y \
@@ -94,11 +116,8 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p files/uploads files/processed 
 
-# IMPORTANT: Ensure system uses Python 3.8 
+# IMPORTANT: Ensure system uses Python 3.11
 ENV PATH="/usr/local/bin:${PATH}"
-
-# Set up FreeSurfer license
-COPY secrets/license.txt ${FREESURFER_HOME}/license.txt
 
 # Create a non-root user to run the application
 RUN groupadd -r msxplain && useradd -r -g msxplain -u 1000 msxplain

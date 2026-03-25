@@ -2,7 +2,7 @@
 services:
   msxplain_backend:
     build: ./backend
-    image: msxplain_backend:4.0
+    image: msxplain_backend:5.0
     container_name: msxplain_backend
     user: "${UID:-1000}:${GID:-1000}"  # Use host user ID to avoid permission issues
     volumes:
@@ -27,7 +27,7 @@ services:
 
   msxplain_frontend:
     build: ./frontend
-    image: msxplain_frontend:4.0
+    image: msxplain_frontend:5.0
     container_name: msxplain_frontend
     ports:
       - "3001:80"

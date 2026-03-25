@@ -3,12 +3,7 @@ import requests
 import pydicom
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
-
 
 def find_dicom_files(base_folder: str) -> list:
     """Find all DICOM files recursively"""
@@ -38,8 +33,6 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
         bool: True if successful, False otherwise
     """
     try:
-        logger.info(f"Checking for existing segmentations for patient: {patient_id}, study: {study_uid}")
-        
         # Search for patient in Orthanc
         search_url = f"{orthanc_url}/tools/find"
         query = {
@@ -80,8 +73,6 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                     logger.debug(f"Skipping study {study_uid_orthanc} - different session")
                     continue
                 
-                logger.info(f"Found matching study/session: {study_uid_orthanc}")
-                
                 # Get all series in this study
                 for series_uid in study_data.get('Series', []):
                     series_url = f"{orthanc_url}/series/{series_uid}"
@@ -100,18 +91,15 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                     )
                     
                     if is_segmentation:
-                        logger.info(f"Found existing segmentation series: {series_uid}")
-                        logger.info(f"  Modality: {modality}, Description: {series_desc}")
-                        
                         # Delete this series
                         delete_url = f"{orthanc_url}/series/{series_uid}"
                         delete_response = requests.delete(delete_url)
                         
                         if delete_response.status_code == 200:
                             deleted_count += 1
-                            logger.info(f"✓ Deleted existing segmentation: {series_uid}")
+                            logger.info(f"Deleted existing segmentation: {series_uid}")
                         else:
-                            logger.warning(f"✗ Failed to delete segmentation: {delete_response.status_code}")
+                            logger.warning(f"Failed to delete segmentation: {delete_response.status_code}")
         
         if deleted_count > 0:
             logger.info(f"Deleted {deleted_count} existing segmentation(s)")
@@ -143,7 +131,6 @@ def upload_to_orthanc(base_folder: str) -> None:
 
     # Convert to absolute path and check directory
     base_folder = os.path.abspath(base_folder)
-    logger.info(f"Scanning directory: {base_folder}")
     
     if not os.path.exists(base_folder):
         logger.error(f"Directory not found: {base_folder}")
@@ -184,10 +171,9 @@ def upload_to_orthanc(base_folder: str) -> None:
             
             # Only delete existing segmentations if we're uploading new segmentations
             if contains_segmentations:
-                logger.info("Uploading new segmentations - will delete existing ones from THIS session only")
+                logger.info("Uploading new segmentations")
                 delete_existing_segmentations(patient_id, study_uid, orthanc_url)
-            else:
-                logger.info("Not uploading segmentations - keeping all existing segmentations")
+
         else:
             logger.warning(f"Missing Patient ID or Study UID in DICOM files (Patient ID: {patient_id}, Study UID: {study_uid})")
     except Exception as e:

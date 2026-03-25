@@ -4,78 +4,34 @@ import subprocess
 import traceback
 from pathlib import Path
 import time
-import yaml
+import numpy as np
 import pydicom
 import SimpleITK as sitk
 import torch
 import pandas as pd
+import logging
+from contextlib import contextmanager
 from .report_provider.predict import predict_msxplain
-from .report_provider.samseg_processing import run_samseg_processing
+from .report_provider.parcellation_processing import run_parcellation
 from .report_provider.lesion_information import generate_lesion_report
+from .report_provider.ensemble_inference import run_ensemble_inference
+from .report_provider.compute_uncertainty import compute_uncertainties
 from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
 
+logger = logging.getLogger(__name__)
 
-# def load_config():
-#     config_path = Path(__file__).parent.parent / 'config.yml'
-#     with open(config_path, 'r') as f:
-#         return yaml.safe_load(f)
 
-# # Load configuration
-# config = load_config()
+@contextmanager
+def suppress_logging(level=logging.CRITICAL):
+    """Context manager to temporarily suppress logging"""
+    previous_level = logging.root.level
+    logging.root.setLevel(level)
+    try:
+        yield
+    finally:
+        logging.root.setLevel(previous_level)
 
-# # Set FSLDIR and FREESURFER and ANTs PATH
-# # Use environment variables if available (for Docker), otherwise use config
-# fsl_dir = os.environ.get("FSLDIR", config['paths']['fsl_dir'])
-# # For Docker, check if FSL is in the expected Docker locations
-# if os.path.exists("/usr/share/fsl/6.0/bin/fslorient"):
-#     fsl_dir = "/usr/share/fsl/6.0"
-# elif os.path.exists("/usr/share/fsl/bin/fslorient"):
-#     fsl_dir = "/usr/share/fsl"
-# os.environ["FSLDIR"] = fsl_dir
-# os.environ["PATH"] += os.pathsep + os.path.join(fsl_dir, "bin")
-# os.environ['FSLOUTPUTTYPE'] = 'NIFTI_GZ'
-# print(f"FSL configured: FSLDIR={fsl_dir}")
-# print(f"PATH includes: {os.environ['PATH']}")
-
-# Debug: Check if fslorient is actually available
-# import subprocess
-# try:
-#     result = subprocess.run(['which', 'fslorient'], capture_output=True, text=True, env=os.environ.copy())
-#     if result.returncode == 0:
-#         print(f"fslorient found at: {result.stdout.strip()}")
-#     else:
-#         print("fslorient not found in PATH")
-#         # Let's check common locations
-#         potential_paths = [
-#             "/usr/share/fsl/6.0/bin/fslorient",
-#             "/usr/share/fsl/bin/fslorient",
-#             "/usr/share/fsl/share/fsl/bin/fslorient"
-#         ]
-#         for path in potential_paths:
-#             if os.path.exists(path):
-#                 print(f"Found fslorient at: {path}")
-# except Exception as e:
-#     print(f"Error checking fslorient: {e}")
-
-# freesurfer_home = os.environ.get("FREESURFER_HOME", config['paths']['freesurfer_home'])
-# os.environ["FREESURFER_HOME"] = freesurfer_home
-# os.environ["PATH"] += os.pathsep + os.path.join(freesurfer_home, "bin")
-# print(f"FreeSurfer configured: FREESURFER_HOME={freesurfer_home}")
-
-# ants_path = os.environ.get("ANTSPATH", config['paths']['ants_dir'])
-# # Handle both cases where ants_dir might include /install or not
-# if not ants_path.endswith('/install') and not ants_path.endswith('/bin'):
-#     if os.path.exists(os.path.join(ants_path, 'install')):
-#         ants_dir = os.path.join(ants_path, "install")
-#     else:
-#         ants_dir = ants_path
-# else:
-#     ants_dir = ants_path
-# os.environ["ANTsDIR"] = ants_dir
-# os.environ["PATH"] += os.pathsep + os.path.join(ants_dir, "bin")
-# print(f"ANTs configured: ANTsDIR={ants_dir}")
-# print(f"PATH includes: {os.environ['PATH']}")
 
 class MSXplainReport:
     def __init__(self, flair_dir: str, t1_dir: str, output_dir: str):
@@ -94,14 +50,15 @@ class MSXplainReport:
         
         # Don't append patient_id here since output_dir already includes it
         self.output_dir = output_dir
+        self.parcellation_dir = os.path.join(self.output_dir, "SYNTHSEG")
         
         # Create output directories
         os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.parcellation_dir, exist_ok=True)
         
         # Path to MSXplain resources
         self.msxplain_dir = Path(__file__).parent.absolute()
         self.model_checkpoint = str(self.msxplain_dir / "model" / "model_epoch_61.pth")
-        self.registration_params = str(self.msxplain_dir / "configs/Parameters_Rigid.txt")
         
         # Validate model file exists
         if not os.path.exists(self.model_checkpoint):
@@ -132,11 +89,11 @@ class MSXplainReport:
             # Clean the ID to be filesystem-friendly
             patient_id = ''.join(c for c in patient_id if c.isalnum() or c in '_-')
             
-            print(f"Using Patient ID: {patient_id}")
+            logger.info(f"Using Patient ID: {patient_id}")
             return patient_id
             
         except Exception as e:
-            print(f"Error getting patient ID: {str(e)}")
+            logger.error(f"Error getting patient ID: {str(e)}")
             traceback.print_exc()
             # Fallback to timestamp if there's an error
             return f"PATIENT_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -158,13 +115,13 @@ class MSXplainReport:
                 
             return stdout
         except Exception as e:
-            print(f"Error running command {' '.join(command)}: {str(e)}")
+            logger.error(f"Error running command {' '.join(command)}: {str(e)}")
             traceback.print_exc()
             raise
 
     def convert_dicoms_to_nifti(self):
         """Convert DICOM series to NIFTI format"""
-        print("Converting DICOM series to NIFTI...")
+        logger.info("Converting DICOM series to NIFTI...")
         
         # Convert FLAIR
         flair_command = [
@@ -194,8 +151,7 @@ class MSXplainReport:
 
     def preprocess_images(self, nifti_files):
         """Run preprocessing steps on NIFTI files"""
-
-        print("Running FSL orientation...")
+        logger.info("Running FSL orientation...")
         
         # FSL orientation steps
         for img_path in [nifti_files['flair'], nifti_files['t1']]:
@@ -203,7 +159,7 @@ class MSXplainReport:
             self.run_command(["fslreorient2std", img_path])
         
         # N4 Bias field correction
-        print("Running N4 Bias field correction...")
+        logger.info("Running N4 Bias field correction...")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[img_type]
@@ -217,10 +173,10 @@ class MSXplainReport:
             
         
         # Brain extraction
-        print("Running Brain extraction...")
+        logger.info("Running Brain extraction...")
         
         device = "0" if torch.cuda.is_available() else "cpu"
-        print(f"HD-BET will use device: {device}")
+        logger.info(f"HD-BET will use device: {device}")
         
         for img_type in ['flair', 't1']:
             input_path = nifti_files[f"{img_type}_n4"]
@@ -234,20 +190,9 @@ class MSXplainReport:
                 "-tta", "0"
             ])
             nifti_files[f"{img_type}_brain"] = output_path
-        
-        # # Elastix registration
-        # print("Running Elastix registration...")
-        
-        # self.run_command([
-        #     "elastix",
-        #     "-f", nifti_files['t1_brain'],  # fixed image (T1)
-        #     "-m", nifti_files['flair_brain'],  # moving image (FLAIR)
-        #     "-out", reg_dir,
-        #     "-p", self.registration_params
-        # ])
 
-        # ANTs registration as alternative/verification
-        print("Running ANTs registration...")
+        # ANTs registration
+        logger.info("Running ANTs registration...")
         reg_dir = os.path.join(self.output_dir, "registration")
         os.makedirs(reg_dir, exist_ok=True)
         
@@ -292,7 +237,7 @@ class MSXplainReport:
             # Using [transform, 1] applies the inverse of the transform
             output_path = os.path.join(self.output_dir, "lesion_map_flair_space_ants.nii.gz")
             
-            print("Applying inverse ANTs transform to lesion map...")
+            logger.info("Applying inverse ANTs transform to lesion map...")
             self.run_command([
                 "antsApplyTransforms",
                 "-d", "3",
@@ -305,7 +250,7 @@ class MSXplainReport:
 
             return output_path
         except Exception as e:
-            print(f"Error inverse transforming lesion map with ANTs: {e}")
+            logger.error(f"Error inverse transforming lesion map with ANTs: {e}")
             traceback.print_exc()
             return None
     
@@ -350,40 +295,90 @@ class MSXplainReport:
             return True
         
         except Exception as e:
-            print(f"Error in registering lesion map: {str(e)}")
+            logger.error(f"Error in registering lesion map: {str(e)}")
             traceback.print_exc()
             return None
 
     def run_msxplain(self, nifti_files):
-        """Run MSXplain prediction and processing"""
+        """Run MSXplain ensemble prediction, uncertainty computation, and processing"""
         
-        # Create SAMSEG directory
-        samseg_dir = os.path.join(self.output_dir, "SAMSEG")
-        os.makedirs(samseg_dir, exist_ok=True)
+        # Check if we have ensemble models for uncertainty computation
+        ensemble_model_dir = self.msxplain_dir / "ensemble_models"
+        ckpt_files = sorted(ensemble_model_dir.glob("*.ckpt"), key=lambda p: p.name) if ensemble_model_dir.exists() else []
+        logger.debug(f"Number of ensemble models found: {len(ckpt_files)} in {ensemble_model_dir}")
         
-        # Run prediction with CUDA override
+        EXPECTED_ENSEMBLE_SIZE = 5
+        
+        if len(ckpt_files) == EXPECTED_ENSEMBLE_SIZE:
+            # Use ensemble inference + uncertainty computation
+            logger.info(f"Found {len(ckpt_files)} ensemble models, running ensemble inference with uncertainty...")
+            
+            # Run ensemble inference to generate NPZ file
+            run_ensemble_inference(
+                flair_path=os.path.join(self.output_dir, "flair_registered.nii.gz"),
+                mprage_path=os.path.join(self.output_dir, "t1_brain.nii.gz"),
+                output_path=self.output_dir,
+                models_path=str(ensemble_model_dir)
+            )
+        
+            # Compute uncertainties
+            logger.info("Computing uncertainties...")
+            
+            try:
+                compute_uncertainties(
+                    output_dir=str(self.output_dir),
+                    n_samples=len(ckpt_files),
+                    proba_threshold=0.5,
+                    n_jobs=4,
+                    l_min=3
+                )
+                logger.info("Uncertainty computation completed")
+            except Exception as e:
+                logger.warning(f"Uncertainty computation failed: {e}")
+                traceback.print_exc()
+                
+            # Use the pred.nii.gz file generated by uncertainty computation
+            prediction_file = os.path.join(self.output_dir, "pred.nii.gz")
+        
+        elif len(ckpt_files) > 0:
+            logger.warning(
+                f"Expected {EXPECTED_ENSEMBLE_SIZE} ensemble models but found {len(ckpt_files)} "
+                f"in {ensemble_model_dir}; falling back to standard prediction without uncertainty"
+            )
+            prediction_file = self._run_standard_prediction(nifti_files)
+                
+        else:
+            # Fallback to standard prediction
+            logger.info("No ensemble models found, using standard prediction")
+            prediction_file = self._run_standard_prediction(nifti_files)
+        
+        # Run Parcellation processing
+        run_parcellation(
+            t1_path=os.path.join(self.output_dir, "t1.nii.gz"),
+            pred_path=prediction_file,
+            parcellation_dir=self.parcellation_dir
+        )
+        
+        with torch.no_grad():
+            torch.cuda.empty_cache()
+
+        return prediction_file
+    
+    def _run_standard_prediction(self, nifti_files):
+        """Fallback method for standard (non-ensemble) prediction"""
+        logger.info("Running standard MSXplain prediction...")
+        
         prediction_file = predict_msxplain(
-            input_val_paths=[self.output_dir, self.output_dir],  # Duplicate path for both inputs
-            input_prefixes=["flair_registered.nii.gz", "t1_brain.nii.gz"],  # Two input files
+            input_val_paths=[self.output_dir, self.output_dir],
+            input_prefixes=["flair_registered.nii.gz", "t1_brain.nii.gz"],
             model_checkpoint=self.model_checkpoint,
+            parcellation_dir=self.parcellation_dir,
             num_workers=0,
             cache_rate=0.1,
             threshold=0.3,
             force_cuda=True
         )
         
-        # Run SAMSEG processing
-        print("Running SAMSEG processing...")
-        
-        run_samseg_processing(
-            patient_dir=self.output_dir,
-            t1_path=os.path.join(self.output_dir, "t1_brain.nii.gz"),
-            pred_path=prediction_file
-        )
-        
-        with torch.no_grad():
-                torch.cuda.empty_cache()
-
         return prediction_file
 
     def generate_report(self, prediction_file):
@@ -393,24 +388,271 @@ class MSXplainReport:
             patient_id=self.patient_id,
             flair_path=os.path.join(self.output_dir, "flair_registered.nii.gz"),
             pred_path=prediction_file,
-            samseg_path=os.path.join(self.output_dir, "SAMSEG")
+            parcellation_path=self.parcellation_dir
         )
         
+        report_path = os.path.join(self.output_dir, f"report.csv")
+        report_df.to_csv(report_path, index=False)
+        
         return report_df
-    
+
+    @staticmethod
+    def _make_sequential_remap(original_ids: list) -> dict:
+        """Return {original_id: new_sequential_id} mapping, starting at 1.
+
+        Ensures DCM-SEG SegmentNumbers are always 1-N with no gaps regardless
+        of which lesion indices survived filtering.  OHIF Viewer indexes its
+        colour LUT by SegmentNumber, so gaps cause palette cycling and wrong
+        colours for the higher-numbered segments.
+        """
+        return {old_id: new_id for new_id, old_id in enumerate(sorted(original_ids), start=1)}
+
     def compute_labels(self, report_df):
         
-        # Get labels from report_df
-        labels_df = pd.DataFrame({
-            'roi_id': report_df['Lesion Index'],
-            'roi_name': report_df['Lesion Type']
-        })
+        # Filter out False Positive lesions first, using the raw Lesion Type column
+        filtered_df = report_df[report_df['Lesion Type'] != 'False Positive']
         
+        # Build labels from filtered DataFrame
+        # Format: "<original_id> <Lesion Type> (<LLU>)" so the original index
+        # is visible in OHIF even after sequential remapping.
+        if 'LLU' in filtered_df.columns:
+            roi_names = filtered_df.apply(
+                lambda row: (
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
+                    if pd.notna(row['LLU'])
+                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
+                ),
+                axis=1
+            )
+        else:
+            roi_names = filtered_df.apply(
+                lambda row: f"{int(row['Lesion Index'])} {row['Lesion Type']}",
+                axis=1
+            )
+        
+        labels_df = pd.DataFrame({
+            'roi_id': filtered_df['Lesion Index'],
+            'roi_name': roi_names
+        })
+
+        # Remap roi_id to sequential 1-N so OHIF colour LUT is never out-of-range
+        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
+        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+
         labels_path = os.path.join(self.output_dir, "labels.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
         
         return Path(labels_path)
+    
+    def create_filtered_lesion_map(self, lesion_map_path, report_df, suffix="_dcmseg"):
+        """Create a filtered lesion map without False Positive lesions for DCM-SEG conversion
         
+        Args:
+            lesion_map_path: Path to the original lesion map NIFTI file
+            report_df: DataFrame containing lesion information
+            suffix: Suffix to add to the output filename (default: "_dcmseg")
+            
+        Returns:
+            Tuple of (Path to the lesion map, bool indicating if filtering was performed)
+            If no False Positives: returns (original_path, False)
+            If False Positives filtered: returns (filtered_path, True)
+        """
+        # Get False Positive lesion indices
+        false_positive_indices = report_df[report_df['Lesion Type'] == 'False Positive']['Lesion Index'].tolist()
+        
+        if not false_positive_indices:
+            logger.info("No False Positive lesions found, using original lesion map")
+            return Path(lesion_map_path), False
+        
+        logger.info(f"Filtering out {len(false_positive_indices)} False Positive lesions: {false_positive_indices}")
+        
+        # Load the lesion map
+        lesion_img = sitk.ReadImage(str(lesion_map_path))
+        lesion_data = sitk.GetArrayFromImage(lesion_img)
+        
+        # Create a copy for filtering
+        filtered_data = lesion_data.copy()
+        
+        # Remove False Positive lesions by setting their voxels to 0
+        for fp_index in false_positive_indices:
+            filtered_data[lesion_data == fp_index] = 0
+
+        # Remap remaining labels to sequential 1-N.
+        # OHIF Viewer indexes its colour LUT by SegmentNumber; gaps caused by
+        # removed FP lesions produce wrong colours for higher-numbered segments.
+        all_indices = set(report_df['Lesion Index'].tolist())
+        surviving_indices = sorted(all_indices - set(false_positive_indices))
+        remap = self._make_sequential_remap(surviving_indices)
+        remapped_data = np.zeros_like(filtered_data)
+        for old_id, new_id in remap.items():
+            remapped_data[filtered_data == old_id] = new_id
+
+        # Create output path
+        base_name = os.path.splitext(os.path.splitext(os.path.basename(lesion_map_path))[0])[0]
+        output_path = os.path.join(self.output_dir, f"{base_name}{suffix}.nii.gz")
+
+        # Create new image with remapped data
+        filtered_img = sitk.GetImageFromArray(remapped_data)
+        filtered_img.CopyInformation(lesion_img)
+        
+        # Save filtered lesion map
+        sitk.WriteImage(filtered_img, output_path)
+        
+        return Path(output_path), True
+
+    def create_uncertainty_filtered_lesion_map(
+        self,
+        lesion_map_path: str,
+        report_df: pd.DataFrame,
+        uncertainty_threshold: float = 0.25,
+        suffix: str = "_uncertainty"
+    ) -> tuple:
+        """Create a lesion map containing only high-confidence (low uncertainty) lesions.
+
+        Keeps lesions whose LLU (Lesion-Level Uncertainty) is strictly below the
+        given threshold.  Lesions with LLU >= threshold, NaN/missing LLU, or
+        classified as False Positive are zeroed out.
+
+        Args:
+            lesion_map_path: Path to the labeled lesion map NIfTI file.
+            report_df: DataFrame produced by ``generate_lesion_report()``.
+            uncertainty_threshold: LLU cutoff — only lesions with
+                ``LLU < uncertainty_threshold`` are retained.  Clinically
+                validated default is 0.25.
+            suffix: Filename suffix appended before ``.nii.gz``.
+
+        Returns:
+            Tuple of (Path to the filtered NIfTI file, bool indicating whether
+            any lesions survived the filter — ``False`` means the file is
+            all-zero and DCM-SEG conversion should be skipped).
+        """
+        logger.info(
+            f"Filtering lesion map by uncertainty < {uncertainty_threshold} ..."
+        )
+
+        # Determine which lesion indices to *remove*
+        if 'LLU' not in report_df.columns:
+            logger.warning(
+                "LLU column not found in report — cannot filter by uncertainty"
+            )
+            return Path(lesion_map_path), False
+
+        # Keep only lesions that are NOT False Positive AND have LLU < threshold
+        high_confidence_mask = (
+            (report_df['Lesion Type'] != 'False Positive')
+            & (report_df['LLU'].notna())
+            & (report_df['LLU'] < uncertainty_threshold)
+        )
+        indices_to_keep = set(
+            report_df.loc[high_confidence_mask, 'Lesion Index'].tolist()
+        )
+        all_indices = set(report_df['Lesion Index'].tolist())
+        indices_to_remove = all_indices - indices_to_keep
+
+        logger.info(
+            f"Uncertainty filter: keeping {len(indices_to_keep)} lesions, "
+            f"removing {len(indices_to_remove)} "
+            f"(threshold={uncertainty_threshold})"
+        )
+
+        if not indices_to_keep:
+            logger.warning(
+                "No lesions survived the uncertainty filter — "
+                "skipping uncertainty DCM-SEG generation"
+            )
+            # Still write the file (all zeros) so the caller can decide
+            lesion_img = sitk.ReadImage(str(lesion_map_path))
+            filtered_data = sitk.GetArrayFromImage(lesion_img) * 0
+            base_name = os.path.splitext(
+                os.path.splitext(os.path.basename(str(lesion_map_path)))[0]
+            )[0]
+            output_path = os.path.join(
+                self.output_dir, f"{base_name}{suffix}.nii.gz"
+            )
+            filtered_img = sitk.GetImageFromArray(filtered_data)
+            filtered_img.CopyInformation(lesion_img)
+            sitk.WriteImage(filtered_img, output_path)
+            return Path(output_path), False
+
+        # Load the lesion map, zero-out removed indices, then remap surviving
+        # labels to sequential 1-N so OHIF colour LUT is never addressed
+        # out-of-range (gaps cause palette cycling → wrong colours).
+        lesion_img = sitk.ReadImage(str(lesion_map_path))
+        lesion_data = sitk.GetArrayFromImage(lesion_img)
+        filtered_data = lesion_data.copy()
+
+        for idx in indices_to_remove:
+            filtered_data[lesion_data == idx] = 0
+
+        remap = self._make_sequential_remap(list(indices_to_keep))
+        remapped_data = np.zeros_like(filtered_data)
+        for old_id, new_id in remap.items():
+            remapped_data[filtered_data == old_id] = new_id
+
+        # Write filtered map
+        base_name = os.path.splitext(
+            os.path.splitext(os.path.basename(str(lesion_map_path)))[0]
+        )[0]
+        output_path = os.path.join(
+            self.output_dir, f"{base_name}{suffix}.nii.gz"
+        )
+        filtered_img = sitk.GetImageFromArray(remapped_data)
+        filtered_img.CopyInformation(lesion_img)
+        sitk.WriteImage(filtered_img, output_path)
+
+        logger.info(
+            f"Uncertainty-filtered lesion map saved to {output_path}"
+        )
+        return Path(output_path), True
+
+    def compute_uncertainty_labels(
+        self, report_df: pd.DataFrame, uncertainty_threshold: float = 0.25
+    ) -> Path:
+        """Compute labels CSV for the uncertainty-filtered DCM-SEG.
+
+        Only includes lesions whose LLU is strictly below the threshold and
+        that are not False Positives.
+
+        Args:
+            report_df: Report DataFrame with LLU and Lesion Type columns.
+            uncertainty_threshold: LLU cutoff (same used for the map filter).
+
+        Returns:
+            Path to the ``labels_uncertainty.csv`` file.
+        """
+        if 'LLU' not in report_df.columns:
+            logger.warning("LLU column not present — returning empty labels")
+            labels_df = pd.DataFrame(columns=['roi_id', 'roi_name'])
+        else:
+            keep_mask = (
+                (report_df['Lesion Type'] != 'False Positive')
+                & (report_df['LLU'].notna())
+                & (report_df['LLU'] < uncertainty_threshold)
+            )
+            filtered_df = report_df[keep_mask]
+
+            roi_names = filtered_df.apply(
+                lambda row: (
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
+                    if pd.notna(row['LLU'])
+                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
+                ),
+                axis=1,
+            )
+            labels_df = pd.DataFrame({
+                'roi_id': filtered_df['Lesion Index'],
+                'roi_name': roi_names,
+            })
+
+        # Remap roi_id to sequential 1-N — must mirror the remapping done in
+        # create_uncertainty_filtered_lesion_map so SegmentNumbers match
+        # the NIfTI pixel values exactly.
+        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
+        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+
+        labels_path = os.path.join(self.output_dir, "labels_uncertainty.csv")
+        labels_df.to_csv(labels_path, index=False, header=False)
+        return Path(labels_path)
 
     def nifti_to_dcmseg(self, lesion_map, labels_path, dcm_ref, out_basename):
         """Convert NIFTI to DCM-SEG"""
@@ -423,11 +665,12 @@ class MSXplainReport:
                          regex='desc-\w+',
                          rtstruct_converter='dcmrtstruct2nii',
                          precision=5,)
-
-        myseg.write_seg(p=Path(self.output_dir),
-                        base_name=out_basename,
-                        mode='dcmseg',
-                        no_overlap = 'enforce',
-                        p_ref=dcm_ref
-                        )
-        return True
+        
+        logger.info("Writing DCM-SEG file...")
+        with suppress_logging():
+            myseg.write_seg(p=Path(self.output_dir),
+                            base_name=out_basename,
+                            mode='dcmseg',
+                            no_overlap = 'enforce',
+                            p_ref=dcm_ref
+                            )

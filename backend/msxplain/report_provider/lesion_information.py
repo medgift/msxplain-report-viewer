@@ -8,6 +8,7 @@ Example: python lesion_information.py report ID SMSC/PRLectrims/4031-5900/2021-1
 python lesion_information.py report ID SMSC/PRLectrims/4031-5900/2021-1224/flair_3d_sbr.nii.gz SAMSEG/pred.nii.gz SAMSEG
 
 '''
+import logging
 import os
 import nibabel as nib
 import numpy as np
@@ -18,25 +19,26 @@ import scipy.ndimage as ndimage
 from .lesion_extraction import get_lesion_types_masks
 import traceback
 
+logger = logging.getLogger(__name__)
 
 def check_image_existence(file_path):
     if not os.path.isfile(file_path):
-        print(file_path)
+        logger.debug(file_path)
         raise FileNotFoundError(f"The {os.path.basename(file_path)} does not exist")
 
 
-def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
+def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path):
     """Generate lesion information report for a specific patient
     
     Args:
         patient_id (str): Patient identifier
         flair_path (str): Path to FLAIR image
         pred_path (str): Path to prediction mask
-        samseg_path (str): Path to SAMSEG directory
+        parcellation_path (str): Path to parcellation directory
         save_each_subject (bool): Whether to save individual subject reports
     """
     try:
-        print(f"Generating report for subject {patient_id}...")
+        logger.info(f"Generating report for subject {patient_id}...")
         
         # Check files exist
         check_image_existence(flair_path)
@@ -49,15 +51,40 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         mask_proxy = nib.load(pred_path)
         mask_data = mask_proxy.get_fdata()
         image_path = Path(flair_path)
+        visit_path = image_path.parent
+        
+        # Load uncertainty data from patient_uncs.csv (more efficient than loading 3D image)
+        lesion_uncertainties_dict = {}
+        PSU = None
+        try:
+            patient_uncs_path = visit_path / "patient_uncs.csv"
+            if patient_uncs_path.exists():
+                patient_uncs_file = pd.read_csv(patient_uncs_path)
+                row = patient_uncs_file[patient_uncs_file['filename'] == f'pred.npz']
+                if not row.empty:
+                    PSU = row['PSU'].values[0]
+                    
+                    # Parse lesion uncertainties dictionary
+                    if 'lesion_uncertainties' in row.columns:
+                        import ast
+                        lesion_uncs_str = row['lesion_uncertainties'].values[0]
+                        lesion_uncertainties_dict = ast.literal_eval(lesion_uncs_str)
+                        logger.info(f"Loaded uncertainties for {len(lesion_uncertainties_dict)} lesions from CSV")
+                else:
+                    logger.warning("No matching prediction found in patient_uncs.csv")
+            else:
+                logger.info("patient_uncs.csv not found - report will be generated without uncertainty values")
+        except Exception as e:
+            logger.warning(f"Could not load uncertainty data: {e}. Continuing without uncertainty values.")
+            lesion_uncertainties_dict = {}
+            PSU = None
 
         # Calculate unit volume
         unit_volume = np.asarray(mask_proxy.header['pixdim'][1:4]).prod()
 
-        # Create DataFrame
-        df = pd.DataFrame(columns=[
-            'ID', 'Lesion Count', 'Lesion Type', 'Lesion Index',
-            'Lesion Center', 'Lesion Voxels', 'Lesion Volume', 'Note'
-        ])
+        # Collect rows as list of dicts, then build DataFrame in one shot
+        # to avoid deprecated row-by-row concat with empty/all-NA columns
+        rows: list[dict] = []
 
         # Get lesion map and prune small lesions
         label_map = get_lesion_types_masks(mask_data, mask_data, 'non_zero', n_jobs=1)['TPL']
@@ -79,10 +106,10 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         nib.save(lesion_map, image_path.parent / "lesion_map.nii.gz")
 
         # Load segmentation masks
-        seg_cortex_undil = nib.load(os.path.join(samseg_path, 'Cortex.nii.gz')).get_fdata()
-        seg_infratentorial_undil = nib.load(os.path.join(samseg_path, 'Infratentorial.nii.gz')).get_fdata()
-        seg_ventricles_undil = nib.load(os.path.join(samseg_path, 'Ventricles.nii.gz')).get_fdata()
-        seg_wm_undil = nib.load(os.path.join(samseg_path, 'WM_Mask.nii.gz')).get_fdata()
+        seg_cortex_undil = nib.load(os.path.join(parcellation_path, 'Cortex.nii.gz')).get_fdata()
+        seg_infratentorial_undil = nib.load(os.path.join(parcellation_path, 'Infratentorial.nii.gz')).get_fdata()
+        seg_ventricles_undil = nib.load(os.path.join(parcellation_path, 'Ventricles.nii.gz')).get_fdata()
+        seg_wm_undil = nib.load(os.path.join(parcellation_path, 'WM_Mask.nii.gz')).get_fdata()
 
         # Define dilation structure
         struct1 = ndimage.generate_binary_structure(3, 1)
@@ -97,6 +124,10 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
         for n, label_idx_in_label_map in enumerate(unique_label):
             the_cluster = label_map == label_idx_in_label_map
             masked_cluster = img_data[the_cluster]
+            
+            # Get lesion-level uncertainty (LLU) from dictionary
+            LLU = lesion_uncertainties_dict.get(label_idx_in_label_map, None)
+            
             lesion_seg = the_cluster.astype(int)
             com = ndimage.center_of_mass(lesion_seg)
             com = (int(com[0]), int(com[1]), int(com[2]))
@@ -126,20 +157,33 @@ def generate_lesion_report(patient_id, flair_path, pred_path, samseg_path):
                 note = ''.join(str(element) for element in cluster_in_mask_data[1:])
                 cluster_in_mask_data = cluster_in_mask_data[0]
 
-            lesion_number = np.max(unique_label) if n==0 else None
+            if n == 0:
+                lesion_number = np.max(unique_label)
+                psu_value = PSU
+            else:
+                lesion_number = None
+                psu_value = None
 
-            # Add to DataFrame
-            df.loc[n] = [
-                patient_id, lesion_number, lesion_type, label_idx_in_label_map,
-                com, num_voxel, num_voxel*unit_volume, note
-            ]
+            # Collect row
+            rows.append({
+                'ID': patient_id,
+                'Lesion Count': lesion_number,
+                'Lesion Type': lesion_type,
+                'Lesion Index': label_idx_in_label_map,
+                'Lesion Center': com,
+                'Lesion Voxels': num_voxel,
+                'Lesion Volume': num_voxel * unit_volume,
+                'LLU': LLU,
+                'PSU': psu_value,
+                'Note': note,
+            })
 
-        # Sort and save results
-        df = df.sort_values(by=['Lesion Index'])
+        # Build DataFrame in one shot and sort
+        df = pd.DataFrame(rows).sort_values(by=['Lesion Index']).reset_index(drop=True)
             
         return df
         
     except Exception as e:
-        print(f"Error generating lesion report: {str(e)}")
+        logger.error(f"Error generating lesion report: {str(e)}")
         traceback.print_exc()
         raise
