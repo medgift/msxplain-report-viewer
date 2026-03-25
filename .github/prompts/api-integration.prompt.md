@@ -18,8 +18,6 @@ You are working on the FastAPI backend REST API and React frontend integration f
 | `GET` | `/api/process-status/{run_id}` | Path param | `{total_patients, patients: {status, steps: {preprocessing, msxplain, report}}}` |
 | `GET` | `/api/processed-runs` | None | `[{id, date, patients: [{id, sessions, status}], total_patients, total_sessions}]` |
 | `GET` | `/api/report/{run_id}/{patient_name}/{session}` | Path params | `{lesions, lesion_summary, lesion_volume, dissemination_space, patient_name, patient_id, patient_birth_date, patient_sex, study_instance_uid, uncertainty: {patient_uncertainty, lesion_type_uncertainties}}` |
-| `GET` | `/api/total_lesions/{run_id}/{patient_name}` | Path params | `{total_lesions, true_lesions, false_positives, lesion_types}` |
-| `GET` | `/api/slice/{run_id}/{patient_name}/{slice_num}` | Path + `show_false_positives` query bool | PNG bytes, headers: `X-Total-Slices` |
 
 ### Key Patterns in `app.py`
 

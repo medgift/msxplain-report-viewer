@@ -39,7 +39,7 @@ const ReportPage = () => {
   }, [run_id, patient_name, session]);  // Add session to dependency array
 
   const openMcDonaldCriteria = () => {
-    window.open('https://www.thelancet.com/article/S1474-4422(25)00270-4/fulltext#', '_blank');
+    window.open('https://www.thelancet.com/article/S1474-4422(25)00270-4/fulltext#', '_blank', 'noopener,noreferrer');
   };
 
   const openOHIFViewer = () => {

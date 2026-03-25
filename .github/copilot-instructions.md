@@ -155,8 +155,6 @@ All services share the `msxplain-network` bridge network.
 | `GET` | `/api/process-status/{run_id}` | Poll processing progress |
 | `GET` | `/api/processed-runs` | List all completed runs |
 | `GET` | `/api/report/{run_id}/{patient_name}/{session}` | Full report JSON |
-| `GET` | `/api/total_lesions/{run_id}/{patient_name}` | Lesion count summary |
-| `GET` | `/api/slice/{run_id}/{patient_name}/{slice_num}` | Rendered brain slice PNG |
 
 **New endpoints**: Always `/api/` prefix. try/except + JSONResponse errors. Full type hints.
 

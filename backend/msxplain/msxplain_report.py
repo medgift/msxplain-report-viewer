@@ -305,7 +305,7 @@ class MSXplainReport:
         # Check if we have ensemble models for uncertainty computation
         ensemble_model_dir = self.msxplain_dir / "ensemble_models"
         ckpt_files = sorted(ensemble_model_dir.glob("*.ckpt"), key=lambda p: p.name) if ensemble_model_dir.exists() else []
-        logging.debug(f"Number of ensemble models found: {len(ckpt_files)} in {ensemble_model_dir}")
+        logger.debug(f"Number of ensemble models found: {len(ckpt_files)} in {ensemble_model_dir}")
         
         EXPECTED_ENSEMBLE_SIZE = 5
         
@@ -330,7 +330,7 @@ class MSXplainReport:
                     n_samples=len(ckpt_files),
                     proba_threshold=0.5,
                     n_jobs=4,
-                    l_min=2
+                    l_min=3
                 )
                 logger.info("Uncertainty computation completed")
             except Exception as e:

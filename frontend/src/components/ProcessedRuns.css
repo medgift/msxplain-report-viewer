@@ -132,7 +132,7 @@
   cursor: not-allowed;
 }
 
-.view-report-button.report-pending:hover {
+.view-report-button.report-pending:hover:not(:disabled) {
   background-color: #c82333 !important;
 }
 
