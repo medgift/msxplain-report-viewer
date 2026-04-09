@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.background import BackgroundTasks
 import uvicorn
 import pandas as pd
@@ -17,6 +17,10 @@ from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for server
+import matplotlib.pyplot as plt
+import scipy.stats as stats
 import logging
 
 logger = logging.getLogger(__name__)
@@ -85,6 +89,129 @@ def format_birth_date(date_str):
         return date_obj.strftime('%d/%m/%Y')
     except ValueError:
         return "Unknown"
+
+# Path to the reference PSU data from the test set
+PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "PSU_data.csv")
+
+
+def generate_certainty_histogram(psc_data: np.ndarray, new_psc_value: float, save_path: str,
+                                  x_min: float = 0, x_max: float = 1) -> None:
+    """Generate a certainty distribution histogram showing where a patient falls in the population.
+
+    Plots a KDE-estimated PDF of patient certainty scores (PSC = 1 - PSU) from the test
+    population and marks the current patient's position with a teal dot and dashed line.
+
+    Args:
+        psc_data (np.ndarray): Array of PSC values from the test population.
+        new_psc_value (float): The new patient's certainty value to highlight.
+        save_path (str): File path to save the PNG plot.
+        x_min (float, optional): Minimum x-axis value. Defaults to 0.
+        x_max (float, optional): Maximum x-axis value. Defaults to 1.
+    """
+    kde = stats.gaussian_kde(psc_data)
+
+    if x_min is None or x_max is None:
+        x_min = min(psc_data) - (max(psc_data) - min(psc_data)) * 0.1
+        x_max = max(psc_data) + (max(psc_data) - min(psc_data)) * 0.1
+    x_plot = np.linspace(x_min, x_max, 500)
+    pdf_values = kde(x_plot)
+
+    percentile = stats.percentileofscore(psc_data, new_psc_value, kind='rank')
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.fill_between(x_plot, pdf_values, color='#D5EDD2', alpha=0.8)
+    ax.plot(x_plot, pdf_values, color='#76BF6A', linewidth=2)
+
+    current_x_pdf_value = kde(new_psc_value)[0]
+    ax.plot(new_psc_value, current_x_pdf_value, marker='o', markersize=12,
+            color='#2BBAB7', linestyle='None', zorder=5)
+    ax.vlines(x=new_psc_value, ymin=0, ymax=current_x_pdf_value,
+              colors='#2BBAB7', linestyles='dashed', linewidth=2, zorder=4)
+
+    ax.set_yticks([])
+    ax.set_yticklabels([])
+    ax.set_frame_on(False)
+
+    ax.set_xticks([np.floor(min(psc_data)), new_psc_value, np.ceil(max(psc_data))])
+    ax.set_xticklabels(
+        [f'{int(np.floor(min(psc_data)))}', f'{new_psc_value:.2f}', f'{int(np.ceil(max(psc_data)))}'],
+        fontsize=12, color='#666666'
+    )
+
+    ax.text(0.5, 1.05, f"{int(percentile)} % of patients have lower certainty",
+            transform=ax.transAxes, fontsize=20, color='#666666',
+            ha='center', va='bottom')
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight', transparent=True)
+    plt.close()
+
+
+@app.get("/api/certainty-histogram/{run_id}/{patient_name}/{session}")
+async def get_certainty_histogram(run_id: str, patient_name: str, session: str):
+    """Generate and serve a patient certainty distribution histogram.
+
+    Reads the patient's PSU from patient_uncs.csv and plots it against
+    the reference test-set distribution from PSU_data.csv.
+
+    Args:
+        run_id (str): The processing run identifier.
+        patient_name (str): The patient name/ID.
+        session (str): The session date string.
+
+    Returns:
+        FileResponse: PNG image of the certainty histogram.
+    """
+    try:
+        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
+
+        # Check for cached histogram first
+        histogram_path = os.path.join(patient_dir, "patient_certainty_distribution.png")
+        patient_uncs_path = os.path.join(patient_dir, "patient_uncs.csv")
+
+        if not os.path.exists(patient_uncs_path):
+            raise HTTPException(status_code=404, detail="Patient uncertainty data not found")
+
+        if not os.path.exists(PSU_DATA_FILEPATH):
+            raise HTTPException(status_code=404, detail="Reference PSU data not found")
+
+        # Regenerate if histogram doesn't exist or is older than patient_uncs.csv
+        needs_generation = (
+            not os.path.exists(histogram_path)
+            or os.path.getmtime(histogram_path) < os.path.getmtime(patient_uncs_path)
+        )
+
+        if needs_generation:
+            # Read the patient's PSU value
+            patient_uncs_df = pd.read_csv(patient_uncs_path)
+            psu_value = float(patient_uncs_df['PSU'].iloc[0])
+            psc_value = 1.0 - psu_value  # Convert uncertainty to certainty
+
+            # Read the reference test-set PSC distribution
+            ref_df = pd.read_csv(PSU_DATA_FILEPATH)
+            psc_data = np.array(ref_df['PSC'])
+
+            # Generate the histogram
+            generate_certainty_histogram(
+                psc_data=psc_data,
+                new_psc_value=psc_value,
+                save_path=histogram_path
+            )
+            logger.info(f"Generated certainty histogram at {histogram_path}")
+
+        return FileResponse(
+            histogram_path,
+            media_type="image/png",
+            headers={"Cache-Control": "max-age=3600"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating certainty histogram: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error generating certainty histogram")
+
 
 # Route to get data from the Excel file
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
@@ -551,8 +678,104 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 )
                                 traceback.print_exc()
 
+                            # ── Brain-region overlay DCM-SEGs ──────────────
+                            # Regions-only and Regions+Lesions for both FLAIR and T1.
+                            # FLAIR: regions registered from T1→FLAIR via ANTs inverse.
+                            # T1: regions already in native T1 space (parcellation_dir).
+                            try:
+                                # Register regions to FLAIR space
+                                flair_regions_dir = executor.submit(
+                                    msxplain.register_regions_to_flair_ants
+                                ).result()
+
+                                if flair_regions_dir is None:
+                                    raise RuntimeError("Region registration to FLAIR space failed")
+
+                                # ── FLAIR regions-only ──
+                                reg_flair_nifti, reg_flair_labels, reg_flair_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    flair_regions_dir
+                                ).result()
+
+                                if reg_flair_ok:
+                                    logger.info("Converting FLAIR regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_flair_nifti, reg_flair_labels,
+                                        Path(flair_dir), "flair_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR region masks — skipping regions-only DCM-SEG")
+
+                                # ── FLAIR regions + lesions ──
+                                rl_flair_nifti, rl_flair_labels, rl_flair_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_flair_space_path, report_df,
+                                    flair_regions_dir
+                                ).result()
+
+                                if rl_flair_ok:
+                                    logger.info("Converting FLAIR regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_flair_nifti, rl_flair_labels,
+                                        Path(flair_dir), "flair_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR regions+lesions content — skipping DCM-SEG")
+
+                                # ── T1 regions-only (native T1 space) ──
+                                reg_t1_nifti, reg_t1_labels, reg_t1_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if reg_t1_ok:
+                                    logger.info("Converting T1 regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_t1_nifti, reg_t1_labels,
+                                        Path(t1_dir), "t1n_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 region masks — skipping regions-only DCM-SEG")
+
+                                # ── T1 regions + lesions ──
+                                rl_t1_nifti, rl_t1_labels, rl_t1_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_path, report_df,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if rl_t1_ok:
+                                    logger.info("Converting T1 regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_t1_nifti, rl_t1_labels,
+                                        Path(t1_dir), "t1n_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 regions+lesions content — skipping DCM-SEG")
+
+                                # Clean up intermediate NIfTI/labels files
+                                for tmp in [
+                                    reg_flair_nifti, reg_flair_labels,
+                                    rl_flair_nifti, rl_flair_labels,
+                                    reg_t1_nifti, reg_t1_labels,
+                                    rl_t1_nifti, rl_t1_labels,
+                                ]:
+                                    if tmp and os.path.exists(tmp):
+                                        os.remove(tmp)
+
+                            except Exception as reg_e:
+                                logger.warning(
+                                    f"Region overlay DCM-SEG generation failed "
+                                    f"(non-blocking): {reg_e}"
+                                )
+                                traceback.print_exc()
+
                             # Upload ALL DCM-SEG outputs to Orthanc
-                            # (includes both original and uncertainty-filtered files)
+                            # (includes original, uncertainty-filtered, and region overlays)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time

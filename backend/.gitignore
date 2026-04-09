@@ -13,4 +13,5 @@ msxplain/ensemble_models/*
 !msxplain/ensemble_models/.gitkeep
 hd_bet_models/*
 !hd_bet_models/.gitkeep
-
+msxplain/configs/*
+!msxplain/configs/.gitkeep
