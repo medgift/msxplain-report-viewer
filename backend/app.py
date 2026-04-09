@@ -551,8 +551,104 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 )
                                 traceback.print_exc()
 
+                            # ── Brain-region overlay DCM-SEGs ──────────────
+                            # Regions-only and Regions+Lesions for both FLAIR and T1.
+                            # FLAIR: regions registered from T1→FLAIR via ANTs inverse.
+                            # T1: regions already in native T1 space (parcellation_dir).
+                            try:
+                                # Register regions to FLAIR space
+                                flair_regions_dir = executor.submit(
+                                    msxplain.register_regions_to_flair_ants
+                                ).result()
+
+                                if flair_regions_dir is None:
+                                    raise RuntimeError("Region registration to FLAIR space failed")
+
+                                # ── FLAIR regions-only ──
+                                reg_flair_nifti, reg_flair_labels, reg_flair_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    flair_regions_dir
+                                ).result()
+
+                                if reg_flair_ok:
+                                    logger.info("Converting FLAIR regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_flair_nifti, reg_flair_labels,
+                                        Path(flair_dir), "flair_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR region masks — skipping regions-only DCM-SEG")
+
+                                # ── FLAIR regions + lesions ──
+                                rl_flair_nifti, rl_flair_labels, rl_flair_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_flair_space_path, report_df,
+                                    flair_regions_dir
+                                ).result()
+
+                                if rl_flair_ok:
+                                    logger.info("Converting FLAIR regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_flair_nifti, rl_flair_labels,
+                                        Path(flair_dir), "flair_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR regions+lesions content — skipping DCM-SEG")
+
+                                # ── T1 regions-only (native T1 space) ──
+                                reg_t1_nifti, reg_t1_labels, reg_t1_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if reg_t1_ok:
+                                    logger.info("Converting T1 regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_t1_nifti, reg_t1_labels,
+                                        Path(t1_dir), "t1n_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 region masks — skipping regions-only DCM-SEG")
+
+                                # ── T1 regions + lesions ──
+                                rl_t1_nifti, rl_t1_labels, rl_t1_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_path, report_df,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if rl_t1_ok:
+                                    logger.info("Converting T1 regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_t1_nifti, rl_t1_labels,
+                                        Path(t1_dir), "t1n_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 regions+lesions content — skipping DCM-SEG")
+
+                                # Clean up intermediate NIfTI/labels files
+                                for tmp in [
+                                    reg_flair_nifti, reg_flair_labels,
+                                    rl_flair_nifti, rl_flair_labels,
+                                    reg_t1_nifti, reg_t1_labels,
+                                    rl_t1_nifti, rl_t1_labels,
+                                ]:
+                                    if tmp and os.path.exists(tmp):
+                                        os.remove(tmp)
+
+                            except Exception as reg_e:
+                                logger.warning(
+                                    f"Region overlay DCM-SEG generation failed "
+                                    f"(non-blocking): {reg_e}"
+                                )
+                                traceback.print_exc()
+
                             # Upload ALL DCM-SEG outputs to Orthanc
-                            # (includes both original and uncertainty-filtered files)
+                            # (includes original, uncertainty-filtered, and region overlays)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time

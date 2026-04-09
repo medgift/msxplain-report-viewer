@@ -618,6 +618,15 @@ class Segmentation():
             "Deep White Matter": [173, 216, 230],     # Light Blue
             "Default": [255, 255, 255],           # White for default
         }
+
+        # Colorblind-friendly palette for brain region overlays
+        # (Okabe-Ito palette — avoids the reds/blues used by lesion types)
+        region_to_rgb = {
+            "Cortex": [0, 158, 115],                 # Teal Green
+            "Infratentorial Region": [230, 159, 0],  # Orange
+            "Ventricles": [86, 180, 233],            # Sky Blue
+            "White Matter": [204, 121, 167],         # Pink
+        }
         
         label_names = ["Periventricular", "Juxtacortical", "Infratentorial", "Deep White Matter"]
         for i, roi in enumerate(self.get_roi_ids()):
@@ -642,7 +651,8 @@ class Segmentation():
                     color = label_to_rgb["Infratentorial"]
                 elif base_name_for_color == label_names[3]:
                     color = label_to_rgb["Deep White Matter"]
-            
+            elif base_name_for_color in region_to_rgb:
+                color = region_to_rgb[base_name_for_color]
             else:    
                 color = label_to_rgb["Default"]
                 logger.warning(f"Label '{name}' not found in label_to_rgb mapping. Using default color.")
