@@ -2,7 +2,7 @@
 services:
   msxplain_backend:
     build: ./backend
-    image: msxplain_backend:5.0
+    image: msxplain_backend:dev
     container_name: msxplain_backend
     user: "${UID:-1000}:${GID:-1000}"  # Use host user ID to avoid permission issues
     volumes:
