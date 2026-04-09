@@ -265,12 +265,42 @@
   color: white;
 }
 
-/* Right Column: Histogram Placeholder */
+/* Right Column: Histogram */
 .uncertainty-right-column {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+.histogram-container {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.histogram-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.histogram-fallback {
+  width: 100%;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  border: 3px dashed rgba(102, 126, 234, 0.3);
+  border-radius: 10px;
 }
 
 .histogram-placeholder {

@@ -108,20 +108,15 @@ const ReportPage = () => {
               {/* Uncertainty Section */}
               {reportData.uncertainty && reportData.uncertainty.patient_uncertainty !== null && (
                 <div className="uncertainty-section">
-                  <h3>Prediction Uncertainty</h3>
+                  <h3>Prediction Certainty</h3>
                   <div className="uncertainty-container-2col">
                     {/* Left Column: Uncertainty Values */}
                     <div className="uncertainty-left-column">
                       <div className="uncertainty-main">
                         <div className="uncertainty-value-card">
-                          <span className="uncertainty-label">Patient-Level Uncertainty (PSU)</span>
+                          <span className="uncertainty-label">Patient-Level Certainty </span>
                           <span className="uncertainty-value">
-                            {(reportData.uncertainty.patient_uncertainty * 100).toFixed(1)}%
-                          </span>
-                          <span className="uncertainty-description">
-                            {reportData.uncertainty.patient_uncertainty < 0.2 ? 'Low uncertainty - High confidence' : 
-                             reportData.uncertainty.patient_uncertainty < 0.4 ? 'Moderate uncertainty' : 
-                             'High uncertainty - Review recommended'}
+                            {(100 - reportData.uncertainty.patient_uncertainty * 100).toFixed(1)}%
                           </span>
                         </div>
                       </div>
@@ -131,13 +126,13 @@ const ReportPage = () => {
                         key => reportData.uncertainty.lesion_type_uncertainties[key] !== null
                       ) && (
                         <div className="uncertainty-details">
-                          <h4>Average Uncertainty by Lesion Type</h4>
+                          <h4>Average Certainty by Lesion Type</h4>
                           <div className="uncertainty-lesion-types">
                             {reportData.uncertainty.lesion_type_uncertainties['Periventricular'] !== null && (
                               <div className="uncertainty-type-item">
                                 <span className="type-label">Periventricular:</span>
                                 <span className="type-value">
-                                  {(reportData.uncertainty.lesion_type_uncertainties['Periventricular'] * 100).toFixed(1)}%
+                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Periventricular'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
@@ -145,7 +140,7 @@ const ReportPage = () => {
                               <div className="uncertainty-type-item">
                                 <span className="type-label">Juxtacortical:</span>
                                 <span className="type-value">
-                                  {(reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] * 100).toFixed(1)}%
+                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
@@ -153,7 +148,7 @@ const ReportPage = () => {
                               <div className="uncertainty-type-item">
                                 <span className="type-label">Infratentorial:</span>
                                 <span className="type-value">
-                                  {(reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] * 100).toFixed(1)}%
+                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
@@ -161,7 +156,7 @@ const ReportPage = () => {
                               <div className="uncertainty-type-item">
                                 <span className="type-label">Deep White Matter:</span>
                                 <span className="type-value">
-                                  {(reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] * 100).toFixed(1)}%
+                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
@@ -170,12 +165,23 @@ const ReportPage = () => {
                       )}
                     </div>
 
-                    {/* Right Column: Histogram Placeholder */}
+                    {/* Right Column: Certainty Distribution Histogram */}
                     <div className="uncertainty-right-column">
-                      <div className="histogram-placeholder">
-                        <div className="histogram-icon">📊</div>
-                        <p>Uncertainty Distribution Histogram</p>
-                        <span className="placeholder-text">Image placeholder</span>
+                      <div className="histogram-container">
+                        <img
+                          src={`/api/certainty-histogram/${run_id}/${patient_name}/${session}`}
+                          alt="Patient Certainty Distribution"
+                          className="histogram-image"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                        <div className="histogram-fallback" style={{ display: 'none' }}>
+                          <div className="histogram-icon">📊</div>
+                          <p>Certainty Distribution Histogram</p>
+                          <span className="placeholder-text">Not available</span>
+                        </div>
                       </div>
                     </div>
                   </div>
