@@ -454,7 +454,7 @@ class MSXplainReport:
         "White Matter": "WM_Mask.nii.gz",
     }
 
-    def register_regions_to_flair_ants(self) -> str:
+    def register_regions_to_flair_ants(self) -> str | None:
         """Inverse-ANTs-transform all SynthSeg region masks from T1 to FLAIR space.
 
         Uses the same forward affine + inverse flag as
@@ -505,7 +505,7 @@ class MSXplainReport:
             return None
 
     def create_regions_nifti_and_labels(self, regions_dir: str = None) -> tuple:
-        """Combine 5 SynthSeg region masks into a single multi-label NIfTI + labels CSV.
+        """Combine 4 SynthSeg region masks into a single multi-label NIfTI + labels CSV.
 
         Args:
             regions_dir: Directory containing the region masks.  When
@@ -513,7 +513,7 @@ class MSXplainReport:
                 are used; pass the FLAIR-space directory returned by
                 ``register_regions_to_flair_ants()`` to get FLAIR-space output.
 
-        Labels are assigned 1-5 in REGION_FILES order.  Voxel priority is
+        Labels are assigned 1-4 in REGION_FILES order.  Voxel priority is
         first-come-first-served (earlier regions win when masks overlap).
 
         Returns:
@@ -568,10 +568,10 @@ class MSXplainReport:
         report_df: pd.DataFrame,
         regions_dir: str = None,
     ) -> tuple:
-        """Combine filtered lesion map + 5 SynthSeg regions into one NIfTI + labels CSV.
+        """Combine filtered lesion map + 4 SynthSeg regions into one NIfTI + labels CSV.
 
         Lesion labels occupy IDs 1-N (False Positives excluded, sequential
-        remap applied).  Region labels occupy N+1 … N+5.  Lesion voxels take
+        remap applied).  Region labels occupy N+1 … N+4.  Lesion voxels take
         priority — region masks are never written over existing lesion voxels.
 
         Args:
