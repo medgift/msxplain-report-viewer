@@ -212,7 +212,15 @@ const ReportPage = () => {
                 <h3>Technique</h3>
                 <p>
                   T1 MPRAGE and FLAIR
-                  {reportData.scanner && (
+                  {reportData.scanner &&
+                    (
+                      [
+                        reportData.scanner.manufacturer,
+                        reportData.scanner.model,
+                        reportData.scanner.field_strength,
+                      ].filter(Boolean).length > 0 ||
+                      reportData.scanner.institution
+                    ) && (
                     <>
                       {' — '}
                       {[reportData.scanner.manufacturer, reportData.scanner.model, reportData.scanner.field_strength]
