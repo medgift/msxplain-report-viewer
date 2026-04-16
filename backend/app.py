@@ -13,7 +13,7 @@ import nibabel as nib
 import numpy as np
 import pydicom
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
@@ -63,6 +63,30 @@ app.add_middleware(
 # Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+# Resolved absolute roots for path traversal checks
+_PROCESSED_ROOT = Path(PROCESSED_FOLDER).resolve()
+_UPLOAD_ROOT = Path(UPLOAD_FOLDER).resolve()
+
+
+def _safe_path(root: Path, *segments: str) -> Path:
+    """Resolve a path under *root* and reject traversal attempts.
+
+    Args:
+        root: The trusted root directory (already resolved).
+        *segments: Untrusted path segments (e.g. run_id, patient_name, session).
+
+    Returns:
+        The resolved absolute Path.
+
+    Raises:
+        HTTPException 403: If the resolved path escapes *root*.
+    """
+    candidate = (root / os.path.join(*segments)).resolve()
+    if not str(candidate).startswith(str(root)):
+        raise HTTPException(status_code=403, detail="Invalid path parameters.")
+    return candidate
+
 
 # Create a thread pool executor
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -213,6 +237,147 @@ async def get_certainty_histogram(run_id: str, patient_name: str, session: str):
         raise HTTPException(status_code=500, detail="Error generating certainty histogram")
 
 
+# Allowed NIfTI filenames that can be served for 3D visualization
+_ALLOWED_NIFTI_FILES = frozenset({
+    "flair_brain.nii.gz",
+    "lesion_map_flair_space_ants.nii.gz",
+    "lesion_map.nii.gz",
+    "flair.nii.gz",
+    "flair_brain_mask.nii.gz",
+    "lesion_types.nii.gz",
+})
+
+# Lesion type → integer code (matches Orthanc DCM-SEG colour scheme)
+_LESION_TYPE_CODES: Dict[str, int] = {
+    "Periventricular": 1,
+    "Juxtacortical": 2,
+    "Infratentorial": 3,
+    "Deep White Matter": 4,
+}
+
+
+@app.get("/api/nifti-lesion-types/{run_id}/{patient_name}/{session}")
+async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
+    """Generate and serve a type-coded lesion NIfTI for 3D visualisation.
+
+    Reads the per-instance ``lesion_map_flair_space_ants.nii.gz`` and the
+    ``report.csv``, then maps every lesion voxel to a categorical type code::
+
+        0 = background / False Positive (transparent)
+        1 = Periventricular   (Dark Red   [139,   0,   0])
+        2 = Juxtacortical     (Light Red  [255, 102, 102])
+        3 = Infratentorial    (Dark Blue  [  0,   0, 139])
+        4 = Deep White Matter (Light Blue [173, 216, 230])
+
+    The generated file is cached on disk as ``lesion_types.nii.gz`` so
+    subsequent requests are served instantly.
+
+    Args:
+        run_id (str): Processing run identifier.
+        patient_name (str): Sanitised patient directory name.
+        session (str): Session date directory name.
+
+    Returns:
+        FileResponse: The type-coded ``.nii.gz`` file.
+
+    Raises:
+        HTTPException 404: If the required source files are missing.
+    """
+    base_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+    lesion_map_path = base_dir / "lesion_map_flair_space_ants.nii.gz"
+    report_path = base_dir / "report.csv"
+    output_path = base_dir / "lesion_types.nii.gz"
+
+    # Serve cached version if already generated
+    if output_path.exists():
+        return FileResponse(
+            str(output_path),
+            media_type="application/gzip",
+            filename="lesion_types.nii.gz",
+            headers={"Cache-Control": "max-age=3600"},
+        )
+
+    if not lesion_map_path.exists():
+        raise HTTPException(status_code=404, detail="Lesion map NIfTI not found.")
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Report CSV not found.")
+
+    try:
+        # Build instance-ID → type-code mapping from report.csv
+        report_df = pd.read_csv(report_path)
+        index_to_code: Dict[int, int] = {}
+        for _, row in report_df.iterrows():
+            idx = int(row["Lesion Index"])
+            ltype = str(row["Lesion Type"]).strip()
+            index_to_code[idx] = _LESION_TYPE_CODES.get(ltype, 0)
+
+        # Load the instance-labelled lesion map
+        img = nib.load(lesion_map_path)
+        data = np.asarray(img.dataobj, dtype=np.int32)
+
+        # Remap: instance ID → categorical type code
+        type_data = np.zeros_like(data, dtype=np.int8)
+        for instance_id, type_code in index_to_code.items():
+            type_data[data == instance_id] = type_code
+
+        # Save the type-coded NIfTI (preserving affine + header geometry)
+        type_img = nib.Nifti1Image(type_data, img.affine)
+        type_img.header.set_data_dtype(np.int8)
+        nib.save(type_img, str(output_path))
+
+        logger.info(
+            "Generated lesion_types.nii.gz for %s/%s/%s (%d lesions mapped)",
+            run_id, patient_name, session, len(index_to_code),
+        )
+    except Exception as exc:
+        logger.error("Failed to generate lesion_types.nii.gz: %s", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error generating lesion type map")
+
+    return FileResponse(
+        str(output_path),
+        media_type="application/gzip",
+        filename="lesion_types.nii.gz",
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
+@app.get("/api/nifti/{run_id}/{patient_name}/{session}/{filename}")
+async def get_nifti_file(run_id: str, patient_name: str, session: str, filename: str):
+    """Serve a NIfTI file for browser-side 3D visualization (e.g. NiiVue).
+
+    Only a fixed allow-list of filenames is accessible to prevent arbitrary
+    file disclosure.  The returned Content-Type is ``application/gzip`` so
+    that ``@niivue/niivue`` can load the volume directly from the URL.
+
+    Args:
+        run_id (str): Processing run identifier.
+        patient_name (str): Sanitized patient name used as the directory name.
+        session (str): Session date string used as the sub-directory name.
+        filename (str): Name of the NIfTI file to return (must be in allow-list).
+
+    Returns:
+        FileResponse: The raw ``.nii.gz`` file.
+
+    Raises:
+        HTTPException 403: If the requested filename is not in the allow-list.
+        HTTPException 404: If the file does not exist in the processed folder.
+    """
+    if filename not in _ALLOWED_NIFTI_FILES:
+        raise HTTPException(status_code=403, detail=f"File '{filename}' is not allowed for serving.")
+
+    file_path = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session, filename)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"NIfTI file not found: {filename}")
+
+    return FileResponse(
+        str(file_path),
+        media_type="application/gzip",
+        filename=filename,
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
 # Route to get data from the Excel file
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
 async def get_report(run_id: str, patient_name: str, session: str):
@@ -358,6 +523,34 @@ async def get_report(run_id: str, patient_name: str, session: str):
             logger.warning(f"Error loading uncertainty data from report: {str(e)}")
             traceback.print_exc()
 
+        # Extract scanner/acquisition metadata from dcm2niix sidecar JSONs
+        scanner_info: Dict[str, Optional[str]] = {
+            "manufacturer": None,
+            "model": None,
+            "field_strength": None,
+            "institution": None,
+            "software_version": None,
+        }
+        try:
+            import json as _json
+            # Try flair.json first, fall back to t1.json
+            for sidecar_name in ("flair.json", "t1.json"):
+                sidecar_path = os.path.join(patient_dir, sidecar_name)
+                if os.path.exists(sidecar_path):
+                    with open(sidecar_path, "r") as sf:
+                        sidecar = _json.load(sf)
+                    scanner_info["manufacturer"] = sidecar.get("Manufacturer")
+                    scanner_info["model"] = sidecar.get("ManufacturersModelName") or sidecar.get("ManufacturerModelName")
+                    field = sidecar.get("MagneticFieldStrength")
+                    if field is not None:
+                        scanner_info["field_strength"] = f"{field}T"
+                    scanner_info["institution"] = sidecar.get("InstitutionName")
+                    scanner_info["software_version"] = sidecar.get("SoftwareVersions")
+                    logger.info(f"Loaded scanner info from {sidecar_name}: {scanner_info}")
+                    break
+        except Exception as e:
+            logger.warning(f"Could not load scanner metadata from sidecar JSON: {e}")
+
         # Format response
         report_data = {
             "lesions": {
@@ -375,7 +568,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
             "patient_sex": patient_sex if patient_sex else "Unknown",
             "study_instance_uid": study_instance_uid if study_instance_uid else None,
-            "uncertainty": uncertainty_data
+            "uncertainty": uncertainty_data,
+            "scanner": scanner_info,
         }
         return report_data
     except Exception as e:

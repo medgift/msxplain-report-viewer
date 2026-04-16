@@ -11,6 +11,7 @@ A web-based application for processing and viewing Multiple Sclerosis (MS) brain
 - **v4.0**: Fully dockerized application with complete integration of OHIF Viewer and Orthanc PACS. All components run in Docker containers with proper user permissions. Image registration now uses ANTs tools instead of elastix for improved performance and consistency.
 - **v5.0**: Replaced FreeSurfer/SAMSEG parcellation with WMH-SynthSeg for faster and lighter brain structure segmentation. Added SwinUNETR ensemble inference (5 models) with voxel-level, lesion-level (LLU), and patient-level (PSU) uncertainty quantification. Uncertainty-filtered DICOM-SEG exports (LLU < 0.25 threshold). Upgraded to Python 3.11, PyTorch 2.7 (CUDA 12.8), pytorch-lightning 2.6, and MONAI 1.4. Built dcm2niix from source with JPEG 2000 and JPEG-LS support. False Positive lesions are now excluded from DICOM-SEG exports while remaining visible in the web report.
 - **v5.1**: Replace uncertainty with certainty and add a plot showing the certainty distribution for the test set in the report. Upload to Orthanc a mask with the 4 important atlas regions.
+- **v5.2**: Added 3D brain visualisation in the report page using a Brain3DViewer component. New backend endpoints serve NIfTI files and generate type-coded lesion maps (Periventricular, Juxtacortical, Infratentorial, Deep White Matter) for interactive 3D rendering. Removed hardcoded follow-up and assessment sections from the report.
 
 ### Repository Structure
 ```
