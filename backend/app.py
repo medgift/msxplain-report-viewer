@@ -499,6 +499,34 @@ async def get_report(run_id: str, patient_name: str, session: str):
             logger.warning(f"Error loading uncertainty data from report: {str(e)}")
             traceback.print_exc()
 
+        # Extract scanner/acquisition metadata from dcm2niix sidecar JSONs
+        scanner_info: Dict[str, Optional[str]] = {
+            "manufacturer": None,
+            "model": None,
+            "field_strength": None,
+            "institution": None,
+            "software_version": None,
+        }
+        try:
+            import json as _json
+            # Try flair.json first, fall back to t1.json
+            for sidecar_name in ("flair.json", "t1.json"):
+                sidecar_path = os.path.join(patient_dir, sidecar_name)
+                if os.path.exists(sidecar_path):
+                    with open(sidecar_path, "r") as sf:
+                        sidecar = _json.load(sf)
+                    scanner_info["manufacturer"] = sidecar.get("Manufacturer")
+                    scanner_info["model"] = sidecar.get("ManufacturersModelName") or sidecar.get("ManufacturerModelName")
+                    field = sidecar.get("MagneticFieldStrength")
+                    if field is not None:
+                        scanner_info["field_strength"] = f"{field}T"
+                    scanner_info["institution"] = sidecar.get("InstitutionName")
+                    scanner_info["software_version"] = sidecar.get("SoftwareVersions")
+                    logger.info(f"Loaded scanner info from {sidecar_name}: {scanner_info}")
+                    break
+        except Exception as e:
+            logger.warning(f"Could not load scanner metadata from sidecar JSON: {e}")
+
         # Format response
         report_data = {
             "lesions": {
@@ -516,7 +544,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
             "patient_sex": patient_sex if patient_sex else "Unknown",
             "study_instance_uid": study_instance_uid if study_instance_uid else None,
-            "uncertainty": uncertainty_data
+            "uncertainty": uncertainty_data,
+            "scanner": scanner_info,
         }
         return report_data
     except Exception as e:
