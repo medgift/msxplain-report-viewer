@@ -210,13 +210,25 @@ const ReportPage = () => {
               
               <div className="subsection">
                 <h3>Technique</h3>
-                <p>T1 Mprage and FLAIR</p>
+                <p>
+                  T1 MPRAGE and FLAIR
+                  {reportData.scanner && (
+                    <>
+                      {' — '}
+                      {[reportData.scanner.manufacturer, reportData.scanner.model, reportData.scanner.field_strength]
+                        .filter(Boolean)
+                        .join(' ')}
+                      {reportData.scanner.institution && (
+                        <span style={{ color: '#888' }}>{` (${reportData.scanner.institution})`}</span>
+                      )}
+                    </>
+                  )}
+                </p>
               </div>
 
               <div className="subsection findings-section">
                 <h3>Findings</h3>
-                <p className="highlight">False positives of MSXplain: {reportData.lesions.false_positive}</p>
-                
+
                 <div className="lesion-stats">
                   <div className="stat-card">
                     <h4>Periventricular</h4>
