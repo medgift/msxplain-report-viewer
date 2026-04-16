@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import Brain3DViewer from './Brain3DViewer';
 import './ReportPage.css';
 
 const ReportPage = () => {
@@ -96,6 +97,7 @@ const ReportPage = () => {
 
         {reportData && (
           <div className="content-container">
+
             <section className="report-section">
               <div className="patient-info">
                 <p><strong>Patient Name:</strong> {reportData.patient_name}</p>
@@ -103,6 +105,22 @@ const ReportPage = () => {
                 <p><strong>Session Date:</strong> {session}</p>  {/* Add session date display */}
                 <p><strong>Birth Date:</strong> {reportData.patient_birth_date}</p>
                 <p><strong>Sex:</strong> {reportData.patient_sex}</p>
+              </div>
+
+              {/* ── 3D Brain Visualisation ── */}
+              <div className="report-section brain3d-section">
+                <h3>3D Brain Visualisation</h3>
+                <Brain3DViewer
+                  run_id={run_id}
+                  patient_name={patient_name}
+                  session={session}
+                  lesionCount={
+                    (Number(reportData.lesions.periventricular) || 0) +
+                    (Number(reportData.lesions.juxtacortical) || 0) +
+                    (Number(reportData.lesions.infratentorial) || 0) +
+                    (Number(reportData.lesions.wm) || 0)
+                  }
+                />
               </div>
               
               {/* Uncertainty Section */}
@@ -242,44 +260,6 @@ const ReportPage = () => {
               <div className="subsection">
                 <h4>Atrophy</h4>
                 <p>Visually age-appropriate.</p>
-              </div>
-
-              <div className="subsection">
-                <h4>Other abnormalities</h4>
-                <p>None</p>
-              </div>
-            </section>
-
-            <section className="report-section">
-              <h3>Assessment</h3>
-              <ul className="assessment-list">
-                <li>The number and distribution of lesions are consistent with an inflammatory CNS disease.</li>
-                <li>Spatial dissemination according to McDonald criteria 2017 is fulfilled.</li>
-                <li>Temporal dissemination according to McDonald criteria 2017 is fulfilled.</li>
-              </ul>
-            </section>
-
-            <section className="report-section">
-              <h2>Follow-up</h2>
-              
-              <div className="subsection">
-                <h3>Technique</h3>
-                <p>Siemens Avanto FIT 1.5T.</p>
-                <p>Previous images described.</p>
-              </div>
-
-              <div className="subsection">
-                <h3>Findings</h3>
-                <p>There are no previous examinations available for comparison.</p>
-              </div>
-
-              <div className="subsection">
-                <h3>Assessment</h3>
-                <ul className="assessment-list">
-                  <li>Known MS with moderate lesion load.</li>
-                  <li>Stable progression compared to the last follow-up, with no new T2 lesions.</li>
-                  <li>No contrast-enhancing lesions.</li>
-                </ul>
               </div>
             </section>
           </div>
