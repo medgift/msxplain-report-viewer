@@ -13,7 +13,7 @@ import nibabel as nib
 import numpy as np
 import pydicom
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
@@ -63,6 +63,30 @@ app.add_middleware(
 # Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+# Resolved absolute roots for path traversal checks
+_PROCESSED_ROOT = Path(PROCESSED_FOLDER).resolve()
+_UPLOAD_ROOT = Path(UPLOAD_FOLDER).resolve()
+
+
+def _safe_path(root: Path, *segments: str) -> Path:
+    """Resolve a path under *root* and reject traversal attempts.
+
+    Args:
+        root: The trusted root directory (already resolved).
+        *segments: Untrusted path segments (e.g. run_id, patient_name, session).
+
+    Returns:
+        The resolved absolute Path.
+
+    Raises:
+        HTTPException 403: If the resolved path escapes *root*.
+    """
+    candidate = (root / os.path.join(*segments)).resolve()
+    if not str(candidate).startswith(str(root)):
+        raise HTTPException(status_code=403, detail="Invalid path parameters.")
+    return candidate
+
 
 # Create a thread pool executor
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -259,23 +283,23 @@ async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
     Raises:
         HTTPException 404: If the required source files are missing.
     """
-    base_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
-    lesion_map_path = os.path.join(base_dir, "lesion_map_flair_space_ants.nii.gz")
-    report_path = os.path.join(base_dir, "report.csv")
-    output_path = os.path.join(base_dir, "lesion_types.nii.gz")
+    base_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+    lesion_map_path = base_dir / "lesion_map_flair_space_ants.nii.gz"
+    report_path = base_dir / "report.csv"
+    output_path = base_dir / "lesion_types.nii.gz"
 
     # Serve cached version if already generated
-    if os.path.exists(output_path):
+    if output_path.exists():
         return FileResponse(
-            output_path,
+            str(output_path),
             media_type="application/gzip",
             filename="lesion_types.nii.gz",
             headers={"Cache-Control": "max-age=3600"},
         )
 
-    if not os.path.exists(lesion_map_path):
+    if not lesion_map_path.exists():
         raise HTTPException(status_code=404, detail="Lesion map NIfTI not found.")
-    if not os.path.exists(report_path):
+    if not report_path.exists():
         raise HTTPException(status_code=404, detail="Report CSV not found.")
 
     try:
@@ -299,7 +323,7 @@ async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
         # Save the type-coded NIfTI (preserving affine + header geometry)
         type_img = nib.Nifti1Image(type_data, img.affine)
         type_img.header.set_data_dtype(np.int8)
-        nib.save(type_img, output_path)
+        nib.save(type_img, str(output_path))
 
         logger.info(
             "Generated lesion_types.nii.gz for %s/%s/%s (%d lesions mapped)",
@@ -308,10 +332,10 @@ async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
     except Exception as exc:
         logger.error("Failed to generate lesion_types.nii.gz: %s", exc)
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Error generating lesion type map")
 
     return FileResponse(
-        output_path,
+        str(output_path),
         media_type="application/gzip",
         filename="lesion_types.nii.gz",
         headers={"Cache-Control": "max-age=3600"},
@@ -342,12 +366,12 @@ async def get_nifti_file(run_id: str, patient_name: str, session: str, filename:
     if filename not in _ALLOWED_NIFTI_FILES:
         raise HTTPException(status_code=403, detail=f"File '{filename}' is not allowed for serving.")
 
-    file_path = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session, filename)
-    if not os.path.exists(file_path):
+    file_path = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session, filename)
+    if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"NIfTI file not found: {filename}")
 
     return FileResponse(
-        file_path,
+        str(file_path),
         media_type="application/gzip",
         filename=filename,
         headers={"Cache-Control": "max-age=3600"},

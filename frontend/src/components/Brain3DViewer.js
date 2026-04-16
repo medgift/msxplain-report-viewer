@@ -119,8 +119,11 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
       });
     }
 
+    let cancelled = false;
+
     nv.loadVolumes(volumes)
       .then(() => {
+        if (cancelled) return;
         // ── Centre the 3-D rendering on the brain tissue ──────────────
         // NiiVue by default centres on the volume bounding-box, but the
         // brain may sit asymmetrically inside the FOV.  We compute the
@@ -168,12 +171,14 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
         setIsLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error('NiiVue failed to load volumes:', err);
         setLoadError('Could not load the NIfTI files for 3D rendering.');
         setIsLoading(false);
       });
 
     return () => {
+      cancelled = true;
       // NiiVue doesn't expose a destroy() – just clear the ref
       nvRef.current = null;
     };
