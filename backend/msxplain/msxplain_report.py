@@ -413,13 +413,13 @@ class MSXplainReport:
         filtered_df = report_df[report_df['Lesion Type'] != 'False Positive']
         
         # Build labels from filtered DataFrame
-        # Format: "<original_id> <Lesion Type> (<LLU>)" so the original index
+        # Format: "<original_id> <Lesion Type> (LLC: <certainty>)" so the original index
         # is visible in OHIF even after sequential remapping.
-        if 'LLU' in filtered_df.columns:
+        if 'LLC' in filtered_df.columns:
             roi_names = filtered_df.apply(
                 lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
-                    if pd.notna(row['LLU'])
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
+                    if pd.notna(row['LLC'])
                     else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
                 ),
                 axis=1
@@ -613,10 +613,10 @@ class MSXplainReport:
             new_id = remap.get(int(row['Lesion Index']))
             if new_id is None:
                 continue
-            llu_str = ""
-            if 'LLU' in filtered_df.columns and pd.notna(row.get('LLU')):
-                llu_str = f" ({row['LLU']:.3f})"
-            name = f"{int(row['Lesion Index'])} {row['Lesion Type']}{llu_str}"
+            llc_str = ""
+            if 'LLC' in filtered_df.columns and pd.notna(row.get('LLC')):
+                llc_str = f" (LLC: {row['LLC']:.3f})"
+            name = f"{int(row['Lesion Index'])} {row['Lesion Type']}{llc_str}"
             labels_rows.append((new_id, name))
 
         # ── Region masks (IDs starting after the last lesion label) ──────
@@ -714,18 +714,18 @@ class MSXplainReport:
         uncertainty_threshold: float = 0.25,
         suffix: str = "_uncertainty"
     ) -> tuple:
-        """Create a lesion map containing only high-confidence (low uncertainty) lesions.
+        """Create a lesion map containing only high-confidence lesions.
 
-        Keeps lesions whose LLU (Lesion-Level Uncertainty) is strictly below the
-        given threshold.  Lesions with LLU >= threshold, NaN/missing LLU, or
+        Keeps lesions whose LLC (Lesion-Level Certainty) is strictly above the
+        given threshold.  Lesions with LLC <= threshold, NaN/missing LLC, or
         classified as False Positive are zeroed out.
 
         Args:
             lesion_map_path: Path to the labeled lesion map NIfTI file.
             report_df: DataFrame produced by ``generate_lesion_report()``.
-            uncertainty_threshold: LLU cutoff — only lesions with
-                ``LLU < uncertainty_threshold`` are retained.  Clinically
-                validated default is 0.25.
+            uncertainty_threshold: LLC cutoff — only lesions with
+                ``LLC > (1 - uncertainty_threshold)`` are retained.  Clinically
+                validated default corresponds to 0.25 uncertainty (i.e. 0.75 certainty).
             suffix: Filename suffix appended before ``.nii.gz``.
 
         Returns:
@@ -738,17 +738,18 @@ class MSXplainReport:
         )
 
         # Determine which lesion indices to *remove*
-        if 'LLU' not in report_df.columns:
+        if 'LLC' not in report_df.columns:
             logger.warning(
-                "LLU column not found in report — cannot filter by uncertainty"
+                "LLC column not found in report — cannot filter by certainty"
             )
             return Path(lesion_map_path), False
 
-        # Keep only lesions that are NOT False Positive AND have LLU < threshold
+        certainty_threshold = 1.0 - uncertainty_threshold
+        # Keep only lesions that are NOT False Positive AND have LLC > certainty_threshold
         high_confidence_mask = (
             (report_df['Lesion Type'] != 'False Positive')
-            & (report_df['LLU'].notna())
-            & (report_df['LLU'] < uncertainty_threshold)
+            & (report_df['LLC'].notna())
+            & (report_df['LLC'] > certainty_threshold)
         )
         indices_to_keep = set(
             report_df.loc[high_confidence_mask, 'Lesion Index'].tolist()
@@ -815,33 +816,34 @@ class MSXplainReport:
     def compute_uncertainty_labels(
         self, report_df: pd.DataFrame, uncertainty_threshold: float = 0.25
     ) -> Path:
-        """Compute labels CSV for the uncertainty-filtered DCM-SEG.
+        """Compute labels CSV for the certainty-filtered DCM-SEG.
 
-        Only includes lesions whose LLU is strictly below the threshold and
+        Only includes lesions whose LLC is strictly above the threshold and
         that are not False Positives.
 
         Args:
-            report_df: Report DataFrame with LLU and Lesion Type columns.
-            uncertainty_threshold: LLU cutoff (same used for the map filter).
+            report_df: Report DataFrame with LLC and Lesion Type columns.
+            uncertainty_threshold: Uncertainty cutoff (LLC > 1 - threshold); same used for the map filter.
 
         Returns:
             Path to the ``labels_uncertainty.csv`` file.
         """
-        if 'LLU' not in report_df.columns:
-            logger.warning("LLU column not present — returning empty labels")
+        if 'LLC' not in report_df.columns:
+            logger.warning("LLC column not present — returning empty labels")
             labels_df = pd.DataFrame(columns=['roi_id', 'roi_name'])
         else:
+            certainty_threshold = 1.0 - uncertainty_threshold
             keep_mask = (
                 (report_df['Lesion Type'] != 'False Positive')
-                & (report_df['LLU'].notna())
-                & (report_df['LLU'] < uncertainty_threshold)
+                & (report_df['LLC'].notna())
+                & (report_df['LLC'] > certainty_threshold)
             )
             filtered_df = report_df[keep_mask]
 
             roi_names = filtered_df.apply(
                 lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
-                    if pd.notna(row['LLU'])
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
+                    if pd.notna(row['LLC'])
                     else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
                 ),
                 axis=1,
