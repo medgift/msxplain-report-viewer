@@ -125,8 +125,9 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
             the_cluster = label_map == label_idx_in_label_map
             masked_cluster = img_data[the_cluster]
             
-            # Get lesion-level uncertainty (LLU) from dictionary
-            LLU = lesion_uncertainties_dict.get(label_idx_in_label_map, None)
+            # Get lesion-level uncertainty from dictionary and convert to LLC (certainty)
+            _llu_raw = lesion_uncertainties_dict.get(label_idx_in_label_map, None)
+            LLC = (1.0 - _llu_raw) if _llu_raw is not None else None
             
             lesion_seg = the_cluster.astype(int)
             com = ndimage.center_of_mass(lesion_seg)
@@ -173,7 +174,7 @@ def generate_lesion_report(patient_id, flair_path, pred_path, parcellation_path)
                 'Lesion Center': com,
                 'Lesion Voxels': num_voxel,
                 'Lesion Volume': num_voxel * unit_volume,
-                'LLU': LLU,
+                'LLC': LLC,
                 'PSU': psu_value,
                 'Note': note,
             })
