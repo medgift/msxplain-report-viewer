@@ -28,7 +28,24 @@ def run_parcellation(t1_path, pred_path, parcellation_dir, device="cpu"):
         # match dimensions with pred.nii.gz, causing fslmaths multiplication errors
 
         seg_path = run_wmh_synthseg(t1_path, parcellation_dir, device=device)
-        
+
+        # Resample segmentation to original T1 resolution using nearest-neighbour interpolation
+        logger.info("Resampling segmentation to original T1 resolution...")
+        seg_resampled_path = os.path.join(parcellation_dir, "seg_resampled.nii.gz")
+        subprocess.run([
+            "flirt",
+            "-in", seg_path,
+            "-ref", t1_path,
+            "-applyxfm", "-usesqform",
+            "-interp", "nearestneighbour",
+            "-out", seg_resampled_path,
+        ],
+                       stdout=subprocess.DEVNULL,
+                       check=True)
+        if not os.path.exists(seg_resampled_path):
+            raise FileNotFoundError(f"flirt failed to create resampled segmentation: {seg_resampled_path}")
+        logger.info(f"Resampled segmentation created: {seg_resampled_path}")
+
         # Create individual structure masks
         logger.info("Creating structure masks...")
         structures = {
@@ -48,7 +65,7 @@ def run_parcellation(t1_path, pred_path, parcellation_dir, device="cpu"):
         for name, (lower, upper) in structures.items():
             subprocess.run([
                 "fslmaths",
-                seg_path,
+                seg_resampled_path,
                 "-thr", str(lower),
                 "-uthr", str(upper),
                 os.path.join(parcellation_dir, f"{name}.nii.gz")
