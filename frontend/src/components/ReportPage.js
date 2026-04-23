@@ -123,58 +123,58 @@ const ReportPage = () => {
                 />
               </div>
               
-              {/* Uncertainty Section */}
-              {reportData.uncertainty && reportData.uncertainty.patient_uncertainty !== null && (
-                <div className="uncertainty-section">
+              {/* Certainty Section */}
+              {reportData.certainty && reportData.certainty.patient_certainty !== null && (
+                <div className="certainty-section">
                   <h3>Prediction Certainty</h3>
-                  <div className="uncertainty-container-2col">
-                    {/* Left Column: Uncertainty Values */}
-                    <div className="uncertainty-left-column">
-                      <div className="uncertainty-main">
-                        <div className="uncertainty-value-card">
-                          <span className="uncertainty-label">Patient-Level Certainty </span>
-                          <span className="uncertainty-value">
-                            {(100 - reportData.uncertainty.patient_uncertainty * 100).toFixed(1)}%
+                  <div className="certainty-container-2col">
+                    {/* Left Column: Certainty Values */}
+                    <div className="certainty-left-column">
+                      <div className="certainty-main">
+                        <div className="certainty-value-card">
+                          <span className="certainty-label">Patient-Level Certainty </span>
+                          <span className="certainty-value">
+                            {(reportData.certainty.patient_certainty * 100).toFixed(1)}%
                           </span>
                         </div>
                       </div>
                       
-                      {/* Lesion Type Uncertainties */}
-                      {Object.keys(reportData.uncertainty.lesion_type_uncertainties).some(
-                        key => reportData.uncertainty.lesion_type_uncertainties[key] !== null
+                      {/* Lesion Type Certainties */}
+                      {Object.keys(reportData.certainty.lesion_type_certainties).some(
+                        key => reportData.certainty.lesion_type_certainties[key] !== null
                       ) && (
-                        <div className="uncertainty-details">
+                        <div className="certainty-details">
                           <h4>Average Certainty by Lesion Type</h4>
-                          <div className="uncertainty-lesion-types">
-                            {reportData.uncertainty.lesion_type_uncertainties['Periventricular'] !== null && (
-                              <div className="uncertainty-type-item">
+                          <div className="certainty-lesion-types">
+                            {reportData.certainty.lesion_type_certainties['Periventricular'] !== null && (
+                              <div className="certainty-type-item">
                                 <span className="type-label">Periventricular:</span>
                                 <span className="type-value">
-                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Periventricular'] * 100).toFixed(1)}%
+                                  {(reportData.certainty.lesion_type_certainties['Periventricular'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
-                            {reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] !== null && (
-                              <div className="uncertainty-type-item">
+                            {reportData.certainty.lesion_type_certainties['Juxtacortical'] !== null && (
+                              <div className="certainty-type-item">
                                 <span className="type-label">Juxtacortical:</span>
                                 <span className="type-value">
-                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Juxtacortical'] * 100).toFixed(1)}%
+                                  {(reportData.certainty.lesion_type_certainties['Juxtacortical'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
-                            {reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] !== null && (
-                              <div className="uncertainty-type-item">
+                            {reportData.certainty.lesion_type_certainties['Infratentorial'] !== null && (
+                              <div className="certainty-type-item">
                                 <span className="type-label">Infratentorial:</span>
                                 <span className="type-value">
-                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Infratentorial'] * 100).toFixed(1)}%
+                                  {(reportData.certainty.lesion_type_certainties['Infratentorial'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
-                            {reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] !== null && (
-                              <div className="uncertainty-type-item">
+                            {reportData.certainty.lesion_type_certainties['Deep White Matter'] !== null && (
+                              <div className="certainty-type-item">
                                 <span className="type-label">Deep White Matter:</span>
                                 <span className="type-value">
-                                  {(100 - reportData.uncertainty.lesion_type_uncertainties['Deep White Matter'] * 100).toFixed(1)}%
+                                  {(reportData.certainty.lesion_type_certainties['Deep White Matter'] * 100).toFixed(1)}%
                                 </span>
                               </div>
                             )}
@@ -184,7 +184,7 @@ const ReportPage = () => {
                     </div>
 
                     {/* Right Column: Certainty Distribution Histogram */}
-                    <div className="uncertainty-right-column">
+                    <div className="certainty-right-column">
                       <div className="histogram-container">
                         <img
                           src={`/api/certainty-histogram/${run_id}/${patient_name}/${session}`}
