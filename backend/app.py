@@ -499,16 +499,29 @@ async def get_report(run_id: str, patient_name: str, session: str):
                     certainty_data["patient_certainty"] = round(1.0 - float(psu_value), 6)
                     logger.info(f"Loaded patient certainty (1-PSU): {certainty_data['patient_certainty']}")
             
-            # Calculate average lesion-level certainty (LLC) for each lesion type
+            # Calculate average lesion-level certainty for each lesion type.
+            # New runs use 'LLC' (Lesion-Level Certainty, direct certainty value 0–1).
+            # Old runs use 'LLU' (Lesion-Level Uncertainty, 0–1); certainty = 1 − LLU.
+            lesion_col: Optional[str] = None
+            use_inversion: bool = False
             if 'LLC' in df.columns:
+                lesion_col = 'LLC'
+                use_inversion = False
+            elif 'LLU' in df.columns:
+                lesion_col = 'LLU'
+                use_inversion = True
+                logger.info("Falling back to LLU column (old run); computing certainty as 1 − LLU")
+
+            if lesion_col is not None:
                 true_lesions_df = df[df['Lesion Type'] != 'False Positive'].copy()
-                
+
                 for lesion_type in ['Periventricular', 'Juxtacortical', 'Infratentorial', 'Deep White Matter']:
                     type_lesions = true_lesions_df[true_lesions_df['Lesion Type'] == lesion_type]
-                    if not type_lesions.empty and 'LLC' in type_lesions.columns:
-                        llc_values = type_lesions['LLC'].dropna()
-                        if not llc_values.empty:
-                            avg_certainty = round(float(llc_values.mean()), 6)
+                    if not type_lesions.empty and lesion_col in type_lesions.columns:
+                        col_values = type_lesions[lesion_col].dropna()
+                        if not col_values.empty:
+                            avg_val = float(col_values.mean())
+                            avg_certainty = round(1.0 - avg_val if use_inversion else avg_val, 6)
                             certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
                             logger.debug(f"Average certainty for {lesion_type}: {avg_certainty}")
                         else:
