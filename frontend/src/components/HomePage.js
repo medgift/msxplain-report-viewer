@@ -1,12 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import './HomePage.css';
+import logo from '../assets/MSxplainLogo.png';
 
 const HomePage = () => {
   return (
     <div className="home-container">
       <div className="logo-container">
-        <img src="/logo.png" alt="MSXplain Logo" className="logo" />
+        <img src={logo} alt="MSXplain Logo" className="logo" />
       </div>
       <h1 className="title">Welcome to MSXplain</h1>
       <p className="subtitle">
