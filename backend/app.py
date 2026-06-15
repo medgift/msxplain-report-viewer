@@ -187,14 +187,14 @@ async def get_certainty_histogram(run_id: str, patient_name: str, session: str):
         FileResponse: PNG image of the certainty histogram.
     """
     try:
-        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
+        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
 
         # Check for cached histogram first
         histogram_path = os.path.join(patient_dir, "patient_certainty_distribution.png")
         patient_uncs_path = os.path.join(patient_dir, "patient_uncs.csv")
 
         if not os.path.exists(patient_uncs_path):
-            raise HTTPException(status_code=404, detail="Patient uncertainty data not found")
+            raise HTTPException(status_code=404, detail="Patient certainty data not found")
 
         if not os.path.exists(PSU_DATA_FILEPATH):
             raise HTTPException(status_code=404, detail="Reference PSU data not found")
@@ -382,8 +382,8 @@ async def get_nifti_file(run_id: str, patient_name: str, session: str, filename:
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
 async def get_report(run_id: str, patient_name: str, session: str):
     try:
-        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
-        
+        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+
         # Construct the correct file path using run_id and session
         file_path = os.path.join(patient_dir, f"report.csv")
         
@@ -485,42 +485,52 @@ async def get_report(run_id: str, patient_name: str, session: str):
         else:
             dissemination_space = "Not fulfilled"
 
-        # Load uncertainty data from report.csv
-        uncertainty_data = {
-            "patient_uncertainty": None,
-            "lesion_type_uncertainties": {}
+        # Build certainty data from report.csv (certainty = 1 − uncertainty)
+        certainty_data = {
+            "patient_certainty": None,
+            "lesion_type_certainties": {}
         }
         
         try:
-            # Get patient-level uncertainty (PSU) from first row if available
+            # Get patient-level certainty (1 − PSU) from first row if available
             if 'PSU' in df.columns and not df.empty:
                 psu_value = df['PSU'].iloc[0]
-                if pd.notna(psu_value):  # Check if not NaN
-                    uncertainty_data["patient_uncertainty"] = float(psu_value)
-                    logger.info(f"Loaded PSU: {uncertainty_data['patient_uncertainty']}")
+                if pd.notna(psu_value):
+                    certainty_data["patient_certainty"] = round(1.0 - float(psu_value), 6)
+                    logger.info(f"Loaded patient certainty (1-PSU): {certainty_data['patient_certainty']}")
             
-            # Calculate average lesion-level uncertainty (LLU) for each lesion type
-            if 'LLU' in df.columns:
-                # Filter out False Positives for uncertainty calculation
+            # Calculate average lesion-level certainty for each lesion type.
+            # New runs use 'LLC' (Lesion-Level Certainty, direct certainty value 0–1).
+            # Old runs use 'LLU' (Lesion-Level Uncertainty, 0–1); certainty = 1 − LLU.
+            lesion_col: Optional[str] = None
+            use_inversion: bool = False
+            if 'LLC' in df.columns:
+                lesion_col = 'LLC'
+                use_inversion = False
+            elif 'LLU' in df.columns:
+                lesion_col = 'LLU'
+                use_inversion = True
+                logger.info("Falling back to LLU column (old run); computing certainty as 1 − LLU")
+
+            if lesion_col is not None:
                 true_lesions_df = df[df['Lesion Type'] != 'False Positive'].copy()
-                
-                # Group by lesion type and calculate mean LLU
+
                 for lesion_type in ['Periventricular', 'Juxtacortical', 'Infratentorial', 'Deep White Matter']:
                     type_lesions = true_lesions_df[true_lesions_df['Lesion Type'] == lesion_type]
-                    if not type_lesions.empty and 'LLU' in type_lesions.columns:
-                        # Get non-NaN LLU values
-                        llu_values = type_lesions['LLU'].dropna()
-                        if not llu_values.empty:
-                            avg_llu = float(llu_values.mean())
-                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = avg_llu
-                            logger.debug(f"Average LLU for {lesion_type}: {avg_llu}")
+                    if not type_lesions.empty and lesion_col in type_lesions.columns:
+                        col_values = type_lesions[lesion_col].dropna()
+                        if not col_values.empty:
+                            avg_val = float(col_values.mean())
+                            avg_certainty = round(1.0 - avg_val if use_inversion else avg_val, 6)
+                            certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
+                            logger.debug(f"Average certainty for {lesion_type}: {avg_certainty}")
                         else:
-                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
+                            certainty_data["lesion_type_certainties"][lesion_type] = None
                     else:
-                        uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
+                        certainty_data["lesion_type_certainties"][lesion_type] = None
                         
         except Exception as e:
-            logger.warning(f"Error loading uncertainty data from report: {str(e)}")
+            logger.warning(f"Error loading certainty data from report: {str(e)}")
             traceback.print_exc()
 
         # Extract scanner/acquisition metadata from dcm2niix sidecar JSONs
@@ -568,7 +578,7 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
             "patient_sex": patient_sex if patient_sex else "Unknown",
             "study_instance_uid": study_instance_uid if study_instance_uid else None,
-            "uncertainty": uncertainty_data,
+            "certainty": certainty_data,
             "scanner": scanner_info,
         }
         return report_data
@@ -817,57 +827,57 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 logger.info(f"Removing filtered file: {filtered_lesion_map_t1}")
                                 os.remove(filtered_lesion_map_t1)
                             
-                            # ── Uncertainty-filtered DCM-SEG (high-confidence lesions only) ──
+                            # ── Certainty-filtered DCM-SEG (high-confidence lesions only) ──
                             # Generates parallel DICOM SEG files that contain ONLY lesions
-                            # with LLU < 0.25 (clinically validated threshold).
+                            # with LLC > 0.75 (clinically validated certainty threshold).
                             try:
-                                uncertainty_labels_path = executor.submit(
+                                certainty_labels_path = executor.submit(
                                     msxplain.compute_uncertainty_labels, report_df, 0.25
                                 ).result()
 
-                                # Filter FLAIR-space lesion map by uncertainty
+                                # Filter FLAIR-space lesion map by certainty
                                 unc_flair_map, unc_flair_has_lesions = executor.submit(
                                     msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_uncertainty"
+                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_certainty"
                                 ).result()
 
-                                # Filter T1-space lesion map by uncertainty
+                                # Filter T1-space lesion map by certainty
                                 unc_t1_map, unc_t1_has_lesions = executor.submit(
                                     msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_path, report_df, 0.25, "_t1_uncertainty"
+                                    lesion_map_path, report_df, 0.25, "_t1_certainty"
                                 ).result()
 
                                 # Convert to DCM-SEG only if at least one lesion survived
                                 if unc_flair_has_lesions:
-                                    logger.info("Converting uncertainty-filtered FLAIR label map to DCM SEG...")
+                                    logger.info("Converting certainty-filtered FLAIR label map to DCM SEG...")
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
-                                        unc_flair_map, uncertainty_labels_path,
-                                        Path(flair_dir), "flair_uncertainty"
+                                        unc_flair_map, certainty_labels_path,
+                                        Path(flair_dir), "flair_certainty"
                                     ).result()
                                 else:
-                                    logger.info("No high-confidence FLAIR lesions — skipping uncertainty DCM-SEG")
+                                    logger.info("No high-confidence FLAIR lesions — skipping certainty DCM-SEG")
 
                                 if unc_t1_has_lesions:
-                                    logger.info("Converting uncertainty-filtered T1 label map to DCM SEG...")
+                                    logger.info("Converting certainty-filtered T1 label map to DCM SEG...")
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
-                                        unc_t1_map, uncertainty_labels_path,
-                                        Path(t1_dir), "t1n_uncertainty"
+                                        unc_t1_map, certainty_labels_path,
+                                        Path(t1_dir), "t1n_certainty"
                                     ).result()
                                 else:
-                                    logger.info("No high-confidence T1 lesions — skipping uncertainty DCM-SEG")
+                                    logger.info("No high-confidence T1 lesions — skipping certainty DCM-SEG")
 
-                                # Clean up intermediate uncertainty-filtered NIfTI files
+                                # Clean up intermediate certainty-filtered NIfTI files
                                 for unc_path in [unc_flair_map, unc_t1_map]:
                                     if os.path.exists(unc_path):
                                         os.remove(unc_path)
-                                if os.path.exists(uncertainty_labels_path):
-                                    os.remove(uncertainty_labels_path)
+                                if os.path.exists(certainty_labels_path):
+                                    os.remove(certainty_labels_path)
 
                             except Exception as unc_e:
                                 logger.warning(
-                                    f"Uncertainty-filtered DCM-SEG generation failed "
+                                    f"Certainty-filtered DCM-SEG generation failed "
                                     f"(non-blocking): {unc_e}"
                                 )
                                 traceback.print_exc()
@@ -969,7 +979,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 traceback.print_exc()
 
                             # Upload ALL DCM-SEG outputs to Orthanc
-                            # (includes original, uncertainty-filtered, and region overlays)
+                            # (includes original, certainty-filtered, and region overlays)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time
