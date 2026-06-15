@@ -100,6 +100,7 @@ Before building, ensure these files are in place:
 - `backend/msxplain/model/*` - MSXplain UNet model weights
 - `backend/msxplain/ensemble_models/*` - SwinUNETR ensemble checkpoints (5 models)
 - `backend/hd_bet_models/*` - Brain extraction models
+- `backend/msxplain/configs/PSU_data.csv` - Reference PSU distribution data used to generate the certainty histogram in the report (not tracked in git; obtain separately)
 
 **Frontend:**
 - `frontend/public/*` - Static assets

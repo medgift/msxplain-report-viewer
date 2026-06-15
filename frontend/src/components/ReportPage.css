@@ -150,8 +150,8 @@
   margin-bottom: 1rem;
 }
 
-/* Uncertainty Section Styles */
-.uncertainty-section {
+/* Certainty Section Styles */
+.certainty-section {
   margin: 2rem 0;
   padding: 2rem;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -160,7 +160,7 @@
   color: white;
 }
 
-.uncertainty-section h3 {
+.certainty-section h3 {
   margin: 0 0 1.5rem 0;
   font-size: 1.5rem;
   font-weight: 600;
@@ -168,25 +168,25 @@
 }
 
 /* Two-Column Layout Container */
-.uncertainty-container-2col {
+.certainty-container-2col {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2rem;
   align-items: start;
 }
 
-/* Left Column: Uncertainty Values */
-.uncertainty-left-column {
+/* Left Column: Certainty Values */
+.certainty-left-column {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
 }
 
-.uncertainty-main {
+.certainty-main {
   margin-bottom: 0;
 }
 
-.uncertainty-value-card {
+.certainty-value-card {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -197,7 +197,7 @@
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-.uncertainty-label {
+.certainty-label {
   font-size: 0.85rem;
   font-weight: 500;
   color: #555;
@@ -206,7 +206,7 @@
   letter-spacing: 0.5px;
 }
 
-.uncertainty-value {
+.certainty-value {
   font-size: 2.2rem;
   font-weight: 700;
   color: #667eea;
@@ -214,13 +214,13 @@
   line-height: 1;
 }
 
-.uncertainty-description {
+.certainty-description {
   font-size: 0.85rem;
   color: #777;
   font-style: italic;
 }
 
-.uncertainty-details {
+.certainty-details {
   margin-top: 0;
   padding: 1.5rem;
   background: rgba(255, 255, 255, 0.15);
@@ -228,7 +228,7 @@
   backdrop-filter: blur(10px);
 }
 
-.uncertainty-details h4 {
+.certainty-details h4 {
   margin: 0 0 1rem 0;
   font-size: 0.95rem;
   font-weight: 500;
@@ -237,13 +237,13 @@
   letter-spacing: 0.3px;
 }
 
-.uncertainty-lesion-types {
+.certainty-lesion-types {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.75rem;
 }
 
-.uncertainty-type-item {
+.certainty-type-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -266,7 +266,7 @@
 }
 
 /* Right Column: Histogram */
-.uncertainty-right-column {
+.certainty-right-column {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -346,7 +346,7 @@
 
 /* Responsive: Stack columns on smaller screens */
 @media (max-width: 1024px) {
-  .uncertainty-container-2col {
+  .certainty-container-2col {
     grid-template-columns: 1fr;
     gap: 1.5rem;
   }
