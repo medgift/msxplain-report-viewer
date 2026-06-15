@@ -733,8 +733,9 @@ class MSXplainReport:
             any lesions survived the filter — ``False`` means the file is
             all-zero and DCM-SEG conversion should be skipped).
         """
+        certainty_threshold = 1.0 - uncertainty_threshold
         logger.info(
-            f"Filtering lesion map by uncertainty < {uncertainty_threshold} ..."
+            f"Filtering lesion map by certainty > {certainty_threshold} ..."
         )
 
         # Determine which lesion indices to *remove*
@@ -744,7 +745,6 @@ class MSXplainReport:
             )
             return Path(lesion_map_path), False
 
-        certainty_threshold = 1.0 - uncertainty_threshold
         # Keep only lesions that are NOT False Positive AND have LLC > certainty_threshold
         high_confidence_mask = (
             (report_df['Lesion Type'] != 'False Positive')
@@ -758,15 +758,15 @@ class MSXplainReport:
         indices_to_remove = all_indices - indices_to_keep
 
         logger.info(
-            f"Uncertainty filter: keeping {len(indices_to_keep)} lesions, "
+            f"Certainty filter: keeping {len(indices_to_keep)} lesions, "
             f"removing {len(indices_to_remove)} "
-            f"(threshold={uncertainty_threshold})"
+            f"(LLC > {certainty_threshold})"
         )
 
         if not indices_to_keep:
             logger.warning(
-                "No lesions survived the uncertainty filter — "
-                "skipping uncertainty DCM-SEG generation"
+                "No lesions survived the certainty filter — "
+                "skipping certainty DCM-SEG generation"
             )
             # Still write the file (all zeros) so the caller can decide
             lesion_img = sitk.ReadImage(str(lesion_map_path))
@@ -809,7 +809,7 @@ class MSXplainReport:
         sitk.WriteImage(filtered_img, output_path)
 
         logger.info(
-            f"Uncertainty-filtered lesion map saved to {output_path}"
+            f"Certainty-filtered lesion map saved to {output_path}"
         )
         return Path(output_path), True
 
