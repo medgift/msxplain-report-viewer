@@ -187,7 +187,7 @@ async def get_certainty_histogram(run_id: str, patient_name: str, session: str):
         FileResponse: PNG image of the certainty histogram.
     """
     try:
-        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
+        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
 
         # Check for cached histogram first
         histogram_path = os.path.join(patient_dir, "patient_certainty_distribution.png")
@@ -382,8 +382,8 @@ async def get_nifti_file(run_id: str, patient_name: str, session: str, filename:
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
 async def get_report(run_id: str, patient_name: str, session: str):
     try:
-        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
-        
+        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+
         # Construct the correct file path using run_id and session
         file_path = os.path.join(patient_dir, f"report.csv")
         
