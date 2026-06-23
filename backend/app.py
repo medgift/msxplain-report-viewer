@@ -17,9 +17,6 @@ from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for server
-import matplotlib.pyplot as plt
 import scipy.stats as stats
 import logging
 
@@ -114,127 +111,55 @@ def format_birth_date(date_str):
     except ValueError:
         return "Unknown"
 
-# Path to the reference PSU data from the test set
+# Reference distributions from the test set (used to locate a patient/lesion
+# within the population via percentile rank).
+#   PSU_data.csv – patient-level: columns include 'PSC' (certainty = 1 − PSU)
+#   LLU_data.csv – lesion-level: column 'LLU' (uncertainty); certainty = 1 − LLU
 PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "PSU_data.csv")
+LLU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "LLU_data.csv")
 
 
-def generate_certainty_histogram(psc_data: np.ndarray, new_psc_value: float, save_path: str,
-                                  x_min: float = 0, x_max: float = 1) -> None:
-    """Generate a certainty distribution histogram showing where a patient falls in the population.
-
-    Plots a KDE-estimated PDF of patient certainty scores (PSC = 1 - PSU) from the test
-    population and marks the current patient's position with a teal dot and dashed line.
+def _load_reference_certainties(filepath: str, value_col: str, invert: bool):
+    """Load a pooled reference distribution of certainty values from the test set.
 
     Args:
-        psc_data (np.ndarray): Array of PSC values from the test population.
-        new_psc_value (float): The new patient's certainty value to highlight.
-        save_path (str): File path to save the PNG plot.
-        x_min (float, optional): Minimum x-axis value. Defaults to 0.
-        x_max (float, optional): Maximum x-axis value. Defaults to 1.
-    """
-    kde = stats.gaussian_kde(psc_data)
-
-    if x_min is None or x_max is None:
-        x_min = min(psc_data) - (max(psc_data) - min(psc_data)) * 0.1
-        x_max = max(psc_data) + (max(psc_data) - min(psc_data)) * 0.1
-    x_plot = np.linspace(x_min, x_max, 500)
-    pdf_values = kde(x_plot)
-
-    percentile = stats.percentileofscore(psc_data, new_psc_value, kind='rank')
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.fill_between(x_plot, pdf_values, color='#D5EDD2', alpha=0.8)
-    ax.plot(x_plot, pdf_values, color='#76BF6A', linewidth=2)
-
-    current_x_pdf_value = kde(new_psc_value)[0]
-    ax.plot(new_psc_value, current_x_pdf_value, marker='o', markersize=12,
-            color='#2BBAB7', linestyle='None', zorder=5)
-    ax.vlines(x=new_psc_value, ymin=0, ymax=current_x_pdf_value,
-              colors='#2BBAB7', linestyles='dashed', linewidth=2, zorder=4)
-
-    ax.set_yticks([])
-    ax.set_yticklabels([])
-    ax.set_frame_on(False)
-
-    ax.set_xticks([np.floor(min(psc_data)), new_psc_value, np.ceil(max(psc_data))])
-    ax.set_xticklabels(
-        [f'{int(np.floor(min(psc_data)))}', f'{new_psc_value:.2f}', f'{int(np.ceil(max(psc_data)))}'],
-        fontsize=12, color='#666666'
-    )
-
-    ax.text(0.5, 1.05, f"{int(percentile)} % of patients have lower certainty",
-            transform=ax.transAxes, fontsize=20, color='#666666',
-            ha='center', va='bottom')
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight', transparent=True)
-    plt.close()
-
-
-@app.get("/api/certainty-histogram/{run_id}/{patient_name}/{session}")
-async def get_certainty_histogram(run_id: str, patient_name: str, session: str):
-    """Generate and serve a patient certainty distribution histogram.
-
-    Reads the patient's PSU from patient_uncs.csv and plots it against
-    the reference test-set distribution from PSU_data.csv.
-
-    Args:
-        run_id (str): The processing run identifier.
-        patient_name (str): The patient name/ID.
-        session (str): The session date string.
+        filepath: Path to the reference CSV.
+        value_col: Column to read (e.g. 'PSC' for patient-level, 'LLU' for lesion-level).
+        invert: If True, the column holds uncertainty and certainty = 1 − value.
 
     Returns:
-        FileResponse: PNG image of the certainty histogram.
+        np.ndarray of certainty values (0–1), or None if unavailable.
     """
     try:
-        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
-
-        # Check for cached histogram first
-        histogram_path = os.path.join(patient_dir, "patient_certainty_distribution.png")
-        patient_uncs_path = os.path.join(patient_dir, "patient_uncs.csv")
-
-        if not os.path.exists(patient_uncs_path):
-            raise HTTPException(status_code=404, detail="Patient certainty data not found")
-
-        if not os.path.exists(PSU_DATA_FILEPATH):
-            raise HTTPException(status_code=404, detail="Reference PSU data not found")
-
-        # Regenerate if histogram doesn't exist or is older than patient_uncs.csv
-        needs_generation = (
-            not os.path.exists(histogram_path)
-            or os.path.getmtime(histogram_path) < os.path.getmtime(patient_uncs_path)
-        )
-
-        if needs_generation:
-            # Read the patient's PSU value
-            patient_uncs_df = pd.read_csv(patient_uncs_path)
-            psu_value = float(patient_uncs_df['PSU'].iloc[0])
-            psc_value = 1.0 - psu_value  # Convert uncertainty to certainty
-
-            # Read the reference test-set PSC distribution
-            ref_df = pd.read_csv(PSU_DATA_FILEPATH)
-            psc_data = np.array(ref_df['PSC'])
-
-            # Generate the histogram
-            generate_certainty_histogram(
-                psc_data=psc_data,
-                new_psc_value=psc_value,
-                save_path=histogram_path
-            )
-            logger.info(f"Generated certainty histogram at {histogram_path}")
-
-        return FileResponse(
-            histogram_path,
-            media_type="image/png",
-            headers={"Cache-Control": "max-age=3600"}
-        )
-
-    except HTTPException:
-        raise
+        if not os.path.exists(filepath):
+            logger.warning(f"Reference distribution not found: {filepath}")
+            return None
+        ref_df = pd.read_csv(filepath)
+        if value_col not in ref_df.columns:
+            logger.warning(f"Column '{value_col}' missing in {filepath}")
+            return None
+        values = pd.to_numeric(ref_df[value_col], errors='coerce').dropna().to_numpy()
+        if values.size == 0:
+            return None
+        return 1.0 - values if invert else values
     except Exception as e:
-        logger.error(f"Error generating certainty histogram: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error generating certainty histogram")
+        logger.warning(f"Could not load reference distribution {filepath}: {e}")
+        return None
+
+
+def _percentile_of(certainty: Optional[float], reference: Optional[np.ndarray]) -> Optional[float]:
+    """Return the percentile (0–100) of a certainty value within a reference distribution.
+
+    Higher certainty → higher percentile (i.e. "X % of the population scored lower").
+    Returns None when the value or reference data is unavailable.
+    """
+    if certainty is None or reference is None or reference.size == 0:
+        return None
+    try:
+        return round(float(stats.percentileofscore(reference, certainty, kind='mean')), 1)
+    except Exception as e:
+        logger.warning(f"Could not compute percentile: {e}")
+        return None
 
 
 # Allowed NIfTI filenames that can be served for 3D visualization
@@ -485,19 +410,32 @@ async def get_report(run_id: str, patient_name: str, session: str):
         else:
             dissemination_space = "Not fulfilled"
 
-        # Build certainty data from report.csv (certainty = 1 − uncertainty)
+        # Build certainty data from report.csv (certainty = 1 − uncertainty).
+        # Percentiles locate the patient/lesions within the test-set population.
         certainty_data = {
             "patient_certainty": None,
-            "lesion_type_certainties": {}
+            "patient_percentile": None,
+            "lesion_type_certainties": {},
+            "lesion_type_percentiles": {},
         }
-        
+
+        # Reference test-set distributions (certainty values, 0–1)
+        psc_reference = _load_reference_certainties(PSU_DATA_FILEPATH, "PSC", invert=False)
+        llc_reference = _load_reference_certainties(LLU_DATA_FILEPATH, "LLU", invert=True)
+
         try:
             # Get patient-level certainty (1 − PSU) from first row if available
             if 'PSU' in df.columns and not df.empty:
                 psu_value = df['PSU'].iloc[0]
                 if pd.notna(psu_value):
                     certainty_data["patient_certainty"] = round(1.0 - float(psu_value), 6)
-                    logger.info(f"Loaded patient certainty (1-PSU): {certainty_data['patient_certainty']}")
+                    certainty_data["patient_percentile"] = _percentile_of(
+                        certainty_data["patient_certainty"], psc_reference
+                    )
+                    logger.info(
+                        f"Patient certainty (1-PSU): {certainty_data['patient_certainty']} "
+                        f"(percentile: {certainty_data['patient_percentile']})"
+                    )
             
             # Calculate average lesion-level certainty for each lesion type.
             # New runs use 'LLC' (Lesion-Level Certainty, direct certainty value 0–1).
@@ -517,17 +455,17 @@ async def get_report(run_id: str, patient_name: str, session: str):
 
                 for lesion_type in ['Periventricular', 'Juxtacortical', 'Infratentorial', 'Deep White Matter']:
                     type_lesions = true_lesions_df[true_lesions_df['Lesion Type'] == lesion_type]
+                    avg_certainty = None
                     if not type_lesions.empty and lesion_col in type_lesions.columns:
                         col_values = type_lesions[lesion_col].dropna()
                         if not col_values.empty:
                             avg_val = float(col_values.mean())
                             avg_certainty = round(1.0 - avg_val if use_inversion else avg_val, 6)
-                            certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
                             logger.debug(f"Average certainty for {lesion_type}: {avg_certainty}")
-                        else:
-                            certainty_data["lesion_type_certainties"][lesion_type] = None
-                    else:
-                        certainty_data["lesion_type_certainties"][lesion_type] = None
+                    certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
+                    certainty_data["lesion_type_percentiles"][lesion_type] = _percentile_of(
+                        avg_certainty, llc_reference
+                    )
                         
         except Exception as e:
             logger.warning(f"Error loading certainty data from report: {str(e)}")
