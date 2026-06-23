@@ -1,0 +1,31 @@
+.certainty-gaussian {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cg-q-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #555;
+  font-family: inherit;
+}
+
+.cg-pct-label {
+  font-size: 10.5px;
+  fill: #9e9e9e;
+  font-family: inherit;
+}
+
+.cg-interval-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #9e9e9e;
+  font-family: inherit;
+}
+
+.cg-value-label {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+}
