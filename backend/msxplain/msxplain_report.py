@@ -413,13 +413,13 @@ class MSXplainReport:
         filtered_df = report_df[report_df['Lesion Type'] != 'False Positive']
         
         # Build labels from filtered DataFrame
-        # Format: "<original_id> <Lesion Type> (<LLU>)" so the original index
+        # Format: "<original_id> <Lesion Type> (LLC: <certainty>)" so the original index
         # is visible in OHIF even after sequential remapping.
-        if 'LLU' in filtered_df.columns:
+        if 'LLC' in filtered_df.columns:
             roi_names = filtered_df.apply(
                 lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
-                    if pd.notna(row['LLU'])
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
+                    if pd.notna(row['LLC'])
                     else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
                 ),
                 axis=1
@@ -443,7 +443,219 @@ class MSXplainReport:
         labels_df.to_csv(labels_path, index=False, header=False)
         
         return Path(labels_path)
-    
+
+    # ── Brain-region overlay constants ──────────────────────────────────
+    # Maps a human-readable region name to the SynthSeg filename under
+    # self.parcellation_dir (SYNTHSEG/).
+    REGION_FILES = {
+        "Cortex": "Cortex.nii.gz",
+        "Infratentorial Region": "Infratentorial.nii.gz",
+        "Ventricles": "Ventricles.nii.gz",
+        "White Matter": "WM_Mask.nii.gz",
+    }
+
+    def register_regions_to_flair_ants(self) -> str | None:
+        """Inverse-ANTs-transform all SynthSeg region masks from T1 to FLAIR space.
+
+        Uses the same forward affine + inverse flag as
+        ``register_lesion_map_to_flair_ants``.  The registered masks are
+        written to ``<output_dir>/SYNTHSEG_FLAIR/`` with the same filenames.
+
+        Returns:
+            Path to the output directory containing FLAIR-space region masks,
+            or ``None`` if the transform could not be applied.
+        """
+        try:
+            reg_dir = os.path.join(self.output_dir, "registration")
+            flair_brain = os.path.join(self.output_dir, "flair_brain.nii.gz")
+            forward_mat = os.path.join(reg_dir, "ants_0GenericAffine.mat")
+
+            if not os.path.exists(forward_mat):
+                raise FileNotFoundError(f"Forward ANTs affine not found: {forward_mat}")
+            if not os.path.exists(flair_brain):
+                raise FileNotFoundError(f"FLAIR brain reference not found: {flair_brain}")
+
+            out_dir = os.path.join(self.output_dir, "SYNTHSEG_FLAIR")
+            os.makedirs(out_dir, exist_ok=True)
+
+            for name, filename in self.REGION_FILES.items():
+                src = os.path.join(self.parcellation_dir, filename)
+                if not os.path.exists(src):
+                    logger.warning(f"Region mask not found, skipping: {src}")
+                    continue
+
+                dst = os.path.join(out_dir, filename)
+                logger.info(f"Registering region '{name}' to FLAIR space → {dst}")
+                self.run_command([
+                    "antsApplyTransforms",
+                    "-d", "3",
+                    "-i", src,
+                    "-r", flair_brain,
+                    "-t", f"[{forward_mat},1]",
+                    "-n", "NearestNeighbor",
+                    "-o", dst,
+                ])
+
+            logger.info(f"All region masks registered to FLAIR space in {out_dir}")
+            return out_dir
+
+        except Exception as e:
+            logger.error(f"Error registering regions to FLAIR space: {e}")
+            traceback.print_exc()
+            return None
+
+    def create_regions_nifti_and_labels(self, regions_dir: str = None) -> tuple:
+        """Combine 4 SynthSeg region masks into a single multi-label NIfTI + labels CSV.
+
+        Args:
+            regions_dir: Directory containing the region masks.  When
+                ``None`` the original T1-space masks from ``self.parcellation_dir``
+                are used; pass the FLAIR-space directory returned by
+                ``register_regions_to_flair_ants()`` to get FLAIR-space output.
+
+        Labels are assigned 1-4 in REGION_FILES order.  Voxel priority is
+        first-come-first-served (earlier regions win when masks overlap).
+
+        Returns:
+            Tuple of (Path to combined NIfTI, Path to labels CSV,
+            bool indicating whether at least one region was found).
+        """
+        if regions_dir is None:
+            regions_dir = self.parcellation_dir
+
+        combined_data = None
+        ref_img = None
+        labels_rows = []
+
+        for label_id, (name, filename) in enumerate(self.REGION_FILES.items(), start=1):
+            filepath = os.path.join(regions_dir, filename)
+            if not os.path.exists(filepath):
+                logger.warning(f"Region mask not found: {filepath}")
+                continue
+
+            img = sitk.ReadImage(filepath)
+            data = sitk.GetArrayFromImage(img)
+
+            if combined_data is None:
+                ref_img = img
+                combined_data = np.zeros_like(data, dtype=np.uint8)
+
+            # Assign label only where the mask is non-zero and no earlier region claimed the voxel
+            combined_data[(data > 0) & (combined_data == 0)] = label_id
+            labels_rows.append((label_id, name))
+
+        if combined_data is None or ref_img is None:
+            logger.warning("No region masks found in parcellation directory")
+            return None, None, False
+
+        # Save combined NIfTI
+        output_path = os.path.join(self.output_dir, "regions_combined.nii.gz")
+        combined_img = sitk.GetImageFromArray(combined_data)
+        combined_img.CopyInformation(ref_img)
+        sitk.WriteImage(combined_img, output_path)
+
+        # Save labels CSV (no header — matches seglib Labels reader)
+        labels_path = os.path.join(self.output_dir, "labels_regions.csv")
+        labels_df = pd.DataFrame(labels_rows, columns=["roi_id", "roi_name"])
+        labels_df.to_csv(labels_path, index=False, header=False)
+
+        logger.info(f"Regions-only NIfTI saved to {output_path} ({len(labels_rows)} regions)")
+        return Path(output_path), Path(labels_path), True
+
+    def create_regions_with_lesions_nifti_and_labels(
+        self,
+        lesion_map_path: str,
+        report_df: pd.DataFrame,
+        regions_dir: str = None,
+    ) -> tuple:
+        """Combine filtered lesion map + 4 SynthSeg regions into one NIfTI + labels CSV.
+
+        Lesion labels occupy IDs 1-N (False Positives excluded, sequential
+        remap applied).  Region labels occupy N+1 … N+4.  Lesion voxels take
+        priority — region masks are never written over existing lesion voxels.
+
+        Args:
+            lesion_map_path: Path to the original (unfiltered) lesion-map NIfTI.
+            report_df: DataFrame produced by ``generate_lesion_report()``.
+            regions_dir: Directory containing the region masks.
+                Pass the FLAIR-space directory returned by
+                ``register_regions_to_flair_ants()`` when the lesion map is
+                in FLAIR space.  Defaults to ``self.parcellation_dir``.
+
+        Returns:
+            Tuple of (Path to combined NIfTI, Path to labels CSV,
+            bool indicating whether the file contains any content).
+        """
+        if regions_dir is None:
+            regions_dir = self.parcellation_dir
+
+        # ── Lesion data (without False Positives, sequentially remapped) ──
+        filtered_df = report_df[report_df['Lesion Type'] != 'False Positive']
+        fp_indices = set(
+            report_df[report_df['Lesion Type'] == 'False Positive']['Lesion Index'].tolist()
+        )
+        all_indices = set(report_df['Lesion Index'].tolist())
+        surviving = sorted(all_indices - fp_indices)
+        remap = self._make_sequential_remap(surviving)
+
+        lesion_img = sitk.ReadImage(str(lesion_map_path))
+        lesion_data = sitk.GetArrayFromImage(lesion_img)
+
+        # uint16: lesions are labelled 1..N and regions N+1.., which can exceed
+        # 255 for high lesion-burden studies and would overflow uint8.
+        combined_data = np.zeros_like(lesion_data, dtype=np.uint16)
+        for old_id, new_id in remap.items():
+            combined_data[lesion_data == old_id] = new_id
+
+        n_lesion_labels = len(surviving)
+
+        # Build lesion portion of the labels CSV
+        labels_rows: list = []
+        for _, row in filtered_df.iterrows():
+            new_id = remap.get(int(row['Lesion Index']))
+            if new_id is None:
+                continue
+            llc_str = ""
+            if 'LLC' in filtered_df.columns and pd.notna(row.get('LLC')):
+                llc_str = f" (LLC: {row['LLC']:.3f})"
+            name = f"{int(row['Lesion Index'])} {row['Lesion Type']}{llc_str}"
+            labels_rows.append((new_id, name))
+
+        # ── Region masks (IDs starting after the last lesion label) ──────
+        region_label_id = n_lesion_labels + 1
+        for name, filename in self.REGION_FILES.items():
+            filepath = os.path.join(regions_dir, filename)
+            if not os.path.exists(filepath):
+                logger.warning(f"Region mask not found: {filepath}")
+                continue
+
+            img = sitk.ReadImage(filepath)
+            data = sitk.GetArrayFromImage(img)
+
+            # Regions only fill voxels not already claimed by a lesion or earlier region
+            combined_data[(data > 0) & (combined_data == 0)] = region_label_id
+            labels_rows.append((region_label_id, name))
+            region_label_id += 1
+
+        # ── Save outputs ─────────────────────────────────────────────────
+        output_path = os.path.join(self.output_dir, "regions_lesions_combined.nii.gz")
+        combined_img = sitk.GetImageFromArray(combined_data)
+        combined_img.CopyInformation(lesion_img)
+        sitk.WriteImage(combined_img, output_path)
+
+        labels_path = os.path.join(self.output_dir, "labels_regions_lesions.csv")
+        labels_df = pd.DataFrame(labels_rows, columns=["roi_id", "roi_name"])
+        labels_df.to_csv(labels_path, index=False, header=False)
+
+        has_content = bool((combined_data > 0).any())
+        logger.info(
+            f"Regions+lesions NIfTI saved to {output_path} "
+            f"({n_lesion_labels} lesions + {region_label_id - n_lesion_labels - 1} regions)"
+        )
+        if not has_content:
+            logger.warning("Regions+lesions map is empty (no lesions and no region masks)")
+        return Path(output_path), Path(labels_path), has_content
+
     def create_filtered_lesion_map(self, lesion_map_path, report_df, suffix="_dcmseg"):
         """Create a filtered lesion map without False Positive lesions for DCM-SEG conversion
         
@@ -507,18 +719,18 @@ class MSXplainReport:
         uncertainty_threshold: float = 0.25,
         suffix: str = "_uncertainty"
     ) -> tuple:
-        """Create a lesion map containing only high-confidence (low uncertainty) lesions.
+        """Create a lesion map containing only high-confidence lesions.
 
-        Keeps lesions whose LLU (Lesion-Level Uncertainty) is strictly below the
-        given threshold.  Lesions with LLU >= threshold, NaN/missing LLU, or
+        Keeps lesions whose LLC (Lesion-Level Certainty) is strictly above the
+        given threshold.  Lesions with LLC <= threshold, NaN/missing LLC, or
         classified as False Positive are zeroed out.
 
         Args:
             lesion_map_path: Path to the labeled lesion map NIfTI file.
             report_df: DataFrame produced by ``generate_lesion_report()``.
-            uncertainty_threshold: LLU cutoff — only lesions with
-                ``LLU < uncertainty_threshold`` are retained.  Clinically
-                validated default is 0.25.
+            uncertainty_threshold: LLC cutoff — only lesions with
+                ``LLC > (1 - uncertainty_threshold)`` are retained.  Clinically
+                validated default corresponds to 0.25 uncertainty (i.e. 0.75 certainty).
             suffix: Filename suffix appended before ``.nii.gz``.
 
         Returns:
@@ -526,22 +738,23 @@ class MSXplainReport:
             any lesions survived the filter — ``False`` means the file is
             all-zero and DCM-SEG conversion should be skipped).
         """
+        certainty_threshold = 1.0 - uncertainty_threshold
         logger.info(
-            f"Filtering lesion map by uncertainty < {uncertainty_threshold} ..."
+            f"Filtering lesion map by certainty > {certainty_threshold} ..."
         )
 
         # Determine which lesion indices to *remove*
-        if 'LLU' not in report_df.columns:
+        if 'LLC' not in report_df.columns:
             logger.warning(
-                "LLU column not found in report — cannot filter by uncertainty"
+                "LLC column not found in report — cannot filter by certainty"
             )
             return Path(lesion_map_path), False
 
-        # Keep only lesions that are NOT False Positive AND have LLU < threshold
+        # Keep only lesions that are NOT False Positive AND have LLC > certainty_threshold
         high_confidence_mask = (
             (report_df['Lesion Type'] != 'False Positive')
-            & (report_df['LLU'].notna())
-            & (report_df['LLU'] < uncertainty_threshold)
+            & (report_df['LLC'].notna())
+            & (report_df['LLC'] > certainty_threshold)
         )
         indices_to_keep = set(
             report_df.loc[high_confidence_mask, 'Lesion Index'].tolist()
@@ -550,15 +763,15 @@ class MSXplainReport:
         indices_to_remove = all_indices - indices_to_keep
 
         logger.info(
-            f"Uncertainty filter: keeping {len(indices_to_keep)} lesions, "
+            f"Certainty filter: keeping {len(indices_to_keep)} lesions, "
             f"removing {len(indices_to_remove)} "
-            f"(threshold={uncertainty_threshold})"
+            f"(LLC > {certainty_threshold})"
         )
 
         if not indices_to_keep:
             logger.warning(
-                "No lesions survived the uncertainty filter — "
-                "skipping uncertainty DCM-SEG generation"
+                "No lesions survived the certainty filter — "
+                "skipping certainty DCM-SEG generation"
             )
             # Still write the file (all zeros) so the caller can decide
             lesion_img = sitk.ReadImage(str(lesion_map_path))
@@ -601,40 +814,41 @@ class MSXplainReport:
         sitk.WriteImage(filtered_img, output_path)
 
         logger.info(
-            f"Uncertainty-filtered lesion map saved to {output_path}"
+            f"Certainty-filtered lesion map saved to {output_path}"
         )
         return Path(output_path), True
 
     def compute_uncertainty_labels(
         self, report_df: pd.DataFrame, uncertainty_threshold: float = 0.25
     ) -> Path:
-        """Compute labels CSV for the uncertainty-filtered DCM-SEG.
+        """Compute labels CSV for the certainty-filtered DCM-SEG.
 
-        Only includes lesions whose LLU is strictly below the threshold and
+        Only includes lesions whose LLC is strictly above the threshold and
         that are not False Positives.
 
         Args:
-            report_df: Report DataFrame with LLU and Lesion Type columns.
-            uncertainty_threshold: LLU cutoff (same used for the map filter).
+            report_df: Report DataFrame with LLC and Lesion Type columns.
+            uncertainty_threshold: Uncertainty cutoff (LLC > 1 - threshold); same used for the map filter.
 
         Returns:
             Path to the ``labels_uncertainty.csv`` file.
         """
-        if 'LLU' not in report_df.columns:
-            logger.warning("LLU column not present — returning empty labels")
+        if 'LLC' not in report_df.columns:
+            logger.warning("LLC column not present — returning empty labels")
             labels_df = pd.DataFrame(columns=['roi_id', 'roi_name'])
         else:
+            certainty_threshold = 1.0 - uncertainty_threshold
             keep_mask = (
                 (report_df['Lesion Type'] != 'False Positive')
-                & (report_df['LLU'].notna())
-                & (report_df['LLU'] < uncertainty_threshold)
+                & (report_df['LLC'].notna())
+                & (report_df['LLC'] > certainty_threshold)
             )
             filtered_df = report_df[keep_mask]
 
             roi_names = filtered_df.apply(
                 lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} ({row['LLU']:.3f})"
-                    if pd.notna(row['LLU'])
+                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
+                    if pd.notna(row['LLC'])
                     else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
                 ),
                 axis=1,

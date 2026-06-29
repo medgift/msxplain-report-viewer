@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.background import BackgroundTasks
 import uvicorn
 import pandas as pd
@@ -13,10 +13,12 @@ import nibabel as nib
 import numpy as np
 import pydicom
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
+import scipy.stats as stats
 import logging
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,30 @@ app.add_middleware(
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
+# Resolved absolute roots for path traversal checks
+_PROCESSED_ROOT = Path(PROCESSED_FOLDER).resolve()
+_UPLOAD_ROOT = Path(UPLOAD_FOLDER).resolve()
+
+
+def _safe_path(root: Path, *segments: str) -> Path:
+    """Resolve a path under *root* and reject traversal attempts.
+
+    Args:
+        root: The trusted root directory (already resolved).
+        *segments: Untrusted path segments (e.g. run_id, patient_name, session).
+
+    Returns:
+        The resolved absolute Path.
+
+    Raises:
+        HTTPException 403: If the resolved path escapes *root*.
+    """
+    candidate = (root / os.path.join(*segments)).resolve()
+    if not candidate.is_relative_to(root):
+        raise HTTPException(status_code=403, detail="Invalid path parameters.")
+    return candidate
+
+
 # Create a thread pool executor
 thread_pool = ThreadPoolExecutor(max_workers=4)
 
@@ -86,12 +112,210 @@ def format_birth_date(date_str):
     except ValueError:
         return "Unknown"
 
+# Reference distributions from the test set (used to locate a patient/lesion
+# within the population via percentile rank).
+#   PSU_data.csv – patient-level: columns include 'PSC' (certainty = 1 − PSU)
+#   LLU_data.csv – lesion-level: column 'LLU' (uncertainty); certainty = 1 − LLU
+PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "PSU_data.csv")
+LLU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "LLU_data.csv")
+
+
+@lru_cache(maxsize=8)
+def _load_reference_certainties(filepath: str, value_col: str, invert: bool) -> Optional[np.ndarray]:
+    """Load a pooled reference distribution of certainty values from the test set.
+
+    The result is cached per (filepath, value_col, invert): reference
+    distributions are static deployment artifacts, so this avoids re-parsing the
+    CSV on every /api/report request. A missing file caches as None for the
+    process lifetime — provision the CSV before startup, or restart after adding.
+
+    Args:
+        filepath: Path to the reference CSV.
+        value_col: Column to read (e.g. 'PSC' for patient-level, 'LLU' for lesion-level).
+        invert: If True, the column holds uncertainty and certainty = 1 − value.
+
+    Returns:
+        np.ndarray of certainty values (0–1), or None if unavailable.
+    """
+    try:
+        if not os.path.exists(filepath):
+            logger.warning(f"Reference distribution not found: {filepath}")
+            return None
+        ref_df = pd.read_csv(filepath)
+        if value_col not in ref_df.columns:
+            logger.warning(f"Column '{value_col}' missing in {filepath}")
+            return None
+        values = pd.to_numeric(ref_df[value_col], errors='coerce').dropna().to_numpy()
+        if values.size == 0:
+            return None
+        return 1.0 - values if invert else values
+    except Exception as e:
+        logger.warning(f"Could not load reference distribution {filepath}: {e}")
+        return None
+
+
+def _percentile_of(certainty: Optional[float], reference: Optional[np.ndarray]) -> Optional[float]:
+    """Return the percentile (0–100) of a certainty value within a reference distribution.
+
+    Higher certainty → higher percentile (i.e. "X % of the population scored lower").
+    Returns None when the value or reference data is unavailable.
+    """
+    if certainty is None or reference is None or reference.size == 0:
+        return None
+    try:
+        return round(float(stats.percentileofscore(reference, certainty, kind='mean')), 1)
+    except Exception as e:
+        logger.warning(f"Could not compute percentile: {e}")
+        return None
+
+
+# Allowed NIfTI filenames that can be served for 3D visualization
+_ALLOWED_NIFTI_FILES = frozenset({
+    "flair_brain.nii.gz",
+    "lesion_map_flair_space_ants.nii.gz",
+    "lesion_map.nii.gz",
+    "flair.nii.gz",
+    "flair_brain_mask.nii.gz",
+    "lesion_types.nii.gz",
+})
+
+# Lesion type → integer code (matches Orthanc DCM-SEG colour scheme)
+_LESION_TYPE_CODES: Dict[str, int] = {
+    "Periventricular": 1,
+    "Juxtacortical": 2,
+    "Infratentorial": 3,
+    "Deep White Matter": 4,
+}
+
+
+@app.get("/api/nifti-lesion-types/{run_id}/{patient_name}/{session}")
+async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
+    """Generate and serve a type-coded lesion NIfTI for 3D visualisation.
+
+    Reads the per-instance ``lesion_map_flair_space_ants.nii.gz`` and the
+    ``report.csv``, then maps every lesion voxel to a categorical type code::
+
+        0 = background / False Positive (transparent)
+        1 = Periventricular   (Dark Red   [139,   0,   0])
+        2 = Juxtacortical     (Light Red  [255, 102, 102])
+        3 = Infratentorial    (Dark Blue  [  0,   0, 139])
+        4 = Deep White Matter (Light Blue [173, 216, 230])
+
+    The generated file is cached on disk as ``lesion_types.nii.gz`` so
+    subsequent requests are served instantly.
+
+    Args:
+        run_id (str): Processing run identifier.
+        patient_name (str): Sanitised patient directory name.
+        session (str): Session date directory name.
+
+    Returns:
+        FileResponse: The type-coded ``.nii.gz`` file.
+
+    Raises:
+        HTTPException 404: If the required source files are missing.
+    """
+    base_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+    lesion_map_path = base_dir / "lesion_map_flair_space_ants.nii.gz"
+    report_path = base_dir / "report.csv"
+    output_path = base_dir / "lesion_types.nii.gz"
+
+    # Serve cached version if already generated
+    if output_path.exists():
+        return FileResponse(
+            str(output_path),
+            media_type="application/gzip",
+            filename="lesion_types.nii.gz",
+            headers={"Cache-Control": "max-age=3600"},
+        )
+
+    if not lesion_map_path.exists():
+        raise HTTPException(status_code=404, detail="Lesion map NIfTI not found.")
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Report CSV not found.")
+
+    try:
+        # Build instance-ID → type-code mapping from report.csv
+        report_df = pd.read_csv(report_path)
+        index_to_code: Dict[int, int] = {}
+        for _, row in report_df.iterrows():
+            idx = int(row["Lesion Index"])
+            ltype = str(row["Lesion Type"]).strip()
+            index_to_code[idx] = _LESION_TYPE_CODES.get(ltype, 0)
+
+        # Load the instance-labelled lesion map
+        img = nib.load(lesion_map_path)
+        data = np.asarray(img.dataobj, dtype=np.int32)
+
+        # Remap: instance ID → categorical type code
+        type_data = np.zeros_like(data, dtype=np.int8)
+        for instance_id, type_code in index_to_code.items():
+            type_data[data == instance_id] = type_code
+
+        # Save the type-coded NIfTI (preserving affine + header geometry)
+        type_img = nib.Nifti1Image(type_data, img.affine)
+        type_img.header.set_data_dtype(np.int8)
+        nib.save(type_img, str(output_path))
+
+        logger.info(
+            "Generated lesion_types.nii.gz for %s/%s/%s (%d lesions mapped)",
+            run_id, patient_name, session, len(index_to_code),
+        )
+    except Exception as exc:
+        logger.error("Failed to generate lesion_types.nii.gz: %s", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Error generating lesion type map")
+
+    return FileResponse(
+        str(output_path),
+        media_type="application/gzip",
+        filename="lesion_types.nii.gz",
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
+@app.get("/api/nifti/{run_id}/{patient_name}/{session}/{filename}")
+async def get_nifti_file(run_id: str, patient_name: str, session: str, filename: str):
+    """Serve a NIfTI file for browser-side 3D visualization (e.g. NiiVue).
+
+    Only a fixed allow-list of filenames is accessible to prevent arbitrary
+    file disclosure.  The returned Content-Type is ``application/gzip`` so
+    that ``@niivue/niivue`` can load the volume directly from the URL.
+
+    Args:
+        run_id (str): Processing run identifier.
+        patient_name (str): Sanitized patient name used as the directory name.
+        session (str): Session date string used as the sub-directory name.
+        filename (str): Name of the NIfTI file to return (must be in allow-list).
+
+    Returns:
+        FileResponse: The raw ``.nii.gz`` file.
+
+    Raises:
+        HTTPException 403: If the requested filename is not in the allow-list.
+        HTTPException 404: If the file does not exist in the processed folder.
+    """
+    if filename not in _ALLOWED_NIFTI_FILES:
+        raise HTTPException(status_code=403, detail=f"File '{filename}' is not allowed for serving.")
+
+    file_path = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session, filename)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"NIfTI file not found: {filename}")
+
+    return FileResponse(
+        str(file_path),
+        media_type="application/gzip",
+        filename=filename,
+        headers={"Cache-Control": "max-age=3600"},
+    )
+
+
 # Route to get data from the Excel file
 @app.get("/api/report/{run_id}/{patient_name}/{session}")          
 async def get_report(run_id: str, patient_name: str, session: str):
     try:
-        patient_dir = os.path.join(PROCESSED_FOLDER, run_id, patient_name, session)
-        
+        patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
+
         # Construct the correct file path using run_id and session
         file_path = os.path.join(patient_dir, f"report.csv")
         
@@ -193,43 +417,94 @@ async def get_report(run_id: str, patient_name: str, session: str):
         else:
             dissemination_space = "Not fulfilled"
 
-        # Load uncertainty data from report.csv
-        uncertainty_data = {
-            "patient_uncertainty": None,
-            "lesion_type_uncertainties": {}
+        # Build certainty data from report.csv (certainty = 1 − uncertainty).
+        # Percentiles locate the patient/lesions within the test-set population.
+        certainty_data = {
+            "patient_certainty": None,
+            "patient_percentile": None,
+            "lesion_type_certainties": {},
+            "lesion_type_percentiles": {},
         }
-        
+
+        # Reference test-set distributions (certainty values, 0–1)
+        psc_reference = _load_reference_certainties(PSU_DATA_FILEPATH, "PSC", invert=False)
+        llc_reference = _load_reference_certainties(LLU_DATA_FILEPATH, "LLU", invert=True)
+
         try:
-            # Get patient-level uncertainty (PSU) from first row if available
+            # Get patient-level certainty (1 − PSU) from first row if available
             if 'PSU' in df.columns and not df.empty:
                 psu_value = df['PSU'].iloc[0]
-                if pd.notna(psu_value):  # Check if not NaN
-                    uncertainty_data["patient_uncertainty"] = float(psu_value)
-                    logger.info(f"Loaded PSU: {uncertainty_data['patient_uncertainty']}")
+                if pd.notna(psu_value):
+                    certainty_data["patient_certainty"] = round(1.0 - float(psu_value), 6)
+                    certainty_data["patient_percentile"] = _percentile_of(
+                        certainty_data["patient_certainty"], psc_reference
+                    )
+                    logger.info(
+                        f"Patient certainty (1-PSU): {certainty_data['patient_certainty']} "
+                        f"(percentile: {certainty_data['patient_percentile']})"
+                    )
             
-            # Calculate average lesion-level uncertainty (LLU) for each lesion type
-            if 'LLU' in df.columns:
-                # Filter out False Positives for uncertainty calculation
+            # Calculate average lesion-level certainty for each lesion type.
+            # New runs use 'LLC' (Lesion-Level Certainty, direct certainty value 0–1).
+            # Old runs use 'LLU' (Lesion-Level Uncertainty, 0–1); certainty = 1 − LLU.
+            lesion_col: Optional[str] = None
+            use_inversion: bool = False
+            if 'LLC' in df.columns:
+                lesion_col = 'LLC'
+                use_inversion = False
+            elif 'LLU' in df.columns:
+                lesion_col = 'LLU'
+                use_inversion = True
+                logger.info("Falling back to LLU column (old run); computing certainty as 1 − LLU")
+
+            if lesion_col is not None:
                 true_lesions_df = df[df['Lesion Type'] != 'False Positive'].copy()
-                
-                # Group by lesion type and calculate mean LLU
+
                 for lesion_type in ['Periventricular', 'Juxtacortical', 'Infratentorial', 'Deep White Matter']:
                     type_lesions = true_lesions_df[true_lesions_df['Lesion Type'] == lesion_type]
-                    if not type_lesions.empty and 'LLU' in type_lesions.columns:
-                        # Get non-NaN LLU values
-                        llu_values = type_lesions['LLU'].dropna()
-                        if not llu_values.empty:
-                            avg_llu = float(llu_values.mean())
-                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = avg_llu
-                            logger.debug(f"Average LLU for {lesion_type}: {avg_llu}")
-                        else:
-                            uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
-                    else:
-                        uncertainty_data["lesion_type_uncertainties"][lesion_type] = None
+                    avg_certainty = None
+                    if not type_lesions.empty and lesion_col in type_lesions.columns:
+                        col_values = type_lesions[lesion_col].dropna()
+                        if not col_values.empty:
+                            avg_val = float(col_values.mean())
+                            avg_certainty = round(1.0 - avg_val if use_inversion else avg_val, 6)
+                            logger.debug(f"Average certainty for {lesion_type}: {avg_certainty}")
+                    certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
+                    certainty_data["lesion_type_percentiles"][lesion_type] = _percentile_of(
+                        avg_certainty, llc_reference
+                    )
                         
         except Exception as e:
-            logger.warning(f"Error loading uncertainty data from report: {str(e)}")
+            logger.warning(f"Error loading certainty data from report: {str(e)}")
             traceback.print_exc()
+
+        # Extract scanner/acquisition metadata from dcm2niix sidecar JSONs
+        scanner_info: Dict[str, Optional[str]] = {
+            "manufacturer": None,
+            "model": None,
+            "field_strength": None,
+            "institution": None,
+            "software_version": None,
+        }
+        try:
+            import json as _json
+            # Try flair.json first, fall back to t1.json
+            for sidecar_name in ("flair.json", "t1.json"):
+                sidecar_path = os.path.join(patient_dir, sidecar_name)
+                if os.path.exists(sidecar_path):
+                    with open(sidecar_path, "r") as sf:
+                        sidecar = _json.load(sf)
+                    scanner_info["manufacturer"] = sidecar.get("Manufacturer")
+                    scanner_info["model"] = sidecar.get("ManufacturersModelName") or sidecar.get("ManufacturerModelName")
+                    field = sidecar.get("MagneticFieldStrength")
+                    if field is not None:
+                        scanner_info["field_strength"] = f"{field}T"
+                    scanner_info["institution"] = sidecar.get("InstitutionName")
+                    scanner_info["software_version"] = sidecar.get("SoftwareVersions")
+                    logger.info(f"Loaded scanner info from {sidecar_name}: {scanner_info}")
+                    break
+        except Exception as e:
+            logger.warning(f"Could not load scanner metadata from sidecar JSON: {e}")
 
         # Format response
         report_data = {
@@ -248,7 +523,8 @@ async def get_report(run_id: str, patient_name: str, session: str):
             "patient_birth_date": patient_birth_date if patient_birth_date else "Unknown",
             "patient_sex": patient_sex if patient_sex else "Unknown",
             "study_instance_uid": study_instance_uid if study_instance_uid else None,
-            "uncertainty": uncertainty_data
+            "certainty": certainty_data,
+            "scanner": scanner_info,
         }
         return report_data
     except Exception as e:
@@ -496,63 +772,159 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 logger.info(f"Removing filtered file: {filtered_lesion_map_t1}")
                                 os.remove(filtered_lesion_map_t1)
                             
-                            # ── Uncertainty-filtered DCM-SEG (high-confidence lesions only) ──
+                            # ── Certainty-filtered DCM-SEG (high-confidence lesions only) ──
                             # Generates parallel DICOM SEG files that contain ONLY lesions
-                            # with LLU < 0.25 (clinically validated threshold).
+                            # with LLC > 0.75 (clinically validated certainty threshold).
                             try:
-                                uncertainty_labels_path = executor.submit(
+                                certainty_labels_path = executor.submit(
                                     msxplain.compute_uncertainty_labels, report_df, 0.25
                                 ).result()
 
-                                # Filter FLAIR-space lesion map by uncertainty
+                                # Filter FLAIR-space lesion map by certainty
                                 unc_flair_map, unc_flair_has_lesions = executor.submit(
                                     msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_uncertainty"
+                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_certainty"
                                 ).result()
 
-                                # Filter T1-space lesion map by uncertainty
+                                # Filter T1-space lesion map by certainty
                                 unc_t1_map, unc_t1_has_lesions = executor.submit(
                                     msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_path, report_df, 0.25, "_t1_uncertainty"
+                                    lesion_map_path, report_df, 0.25, "_t1_certainty"
                                 ).result()
 
                                 # Convert to DCM-SEG only if at least one lesion survived
                                 if unc_flair_has_lesions:
-                                    logger.info("Converting uncertainty-filtered FLAIR label map to DCM SEG...")
+                                    logger.info("Converting certainty-filtered FLAIR label map to DCM SEG...")
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
-                                        unc_flair_map, uncertainty_labels_path,
-                                        Path(flair_dir), "flair_uncertainty"
+                                        unc_flair_map, certainty_labels_path,
+                                        Path(flair_dir), "flair_certainty"
                                     ).result()
                                 else:
-                                    logger.info("No high-confidence FLAIR lesions — skipping uncertainty DCM-SEG")
+                                    logger.info("No high-confidence FLAIR lesions — skipping certainty DCM-SEG")
 
                                 if unc_t1_has_lesions:
-                                    logger.info("Converting uncertainty-filtered T1 label map to DCM SEG...")
+                                    logger.info("Converting certainty-filtered T1 label map to DCM SEG...")
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
-                                        unc_t1_map, uncertainty_labels_path,
-                                        Path(t1_dir), "t1n_uncertainty"
+                                        unc_t1_map, certainty_labels_path,
+                                        Path(t1_dir), "t1n_certainty"
                                     ).result()
                                 else:
-                                    logger.info("No high-confidence T1 lesions — skipping uncertainty DCM-SEG")
+                                    logger.info("No high-confidence T1 lesions — skipping certainty DCM-SEG")
 
-                                # Clean up intermediate uncertainty-filtered NIfTI files
+                                # Clean up intermediate certainty-filtered NIfTI files
                                 for unc_path in [unc_flair_map, unc_t1_map]:
                                     if os.path.exists(unc_path):
                                         os.remove(unc_path)
-                                if os.path.exists(uncertainty_labels_path):
-                                    os.remove(uncertainty_labels_path)
+                                if os.path.exists(certainty_labels_path):
+                                    os.remove(certainty_labels_path)
 
                             except Exception as unc_e:
                                 logger.warning(
-                                    f"Uncertainty-filtered DCM-SEG generation failed "
+                                    f"Certainty-filtered DCM-SEG generation failed "
                                     f"(non-blocking): {unc_e}"
                                 )
                                 traceback.print_exc()
 
+                            # ── Brain-region overlay DCM-SEGs ──────────────
+                            # Regions-only and Regions+Lesions for both FLAIR and T1.
+                            # FLAIR: regions registered from T1→FLAIR via ANTs inverse.
+                            # T1: regions already in native T1 space (parcellation_dir).
+                            try:
+                                # Register regions to FLAIR space
+                                flair_regions_dir = executor.submit(
+                                    msxplain.register_regions_to_flair_ants
+                                ).result()
+
+                                if flair_regions_dir is None:
+                                    raise RuntimeError("Region registration to FLAIR space failed")
+
+                                # ── FLAIR regions-only ──
+                                reg_flair_nifti, reg_flair_labels, reg_flair_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    flair_regions_dir
+                                ).result()
+
+                                if reg_flair_ok:
+                                    logger.info("Converting FLAIR regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_flair_nifti, reg_flair_labels,
+                                        Path(flair_dir), "flair_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR region masks — skipping regions-only DCM-SEG")
+
+                                # ── FLAIR regions + lesions ──
+                                rl_flair_nifti, rl_flair_labels, rl_flair_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_flair_space_path, report_df,
+                                    flair_regions_dir
+                                ).result()
+
+                                if rl_flair_ok:
+                                    logger.info("Converting FLAIR regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_flair_nifti, rl_flair_labels,
+                                        Path(flair_dir), "flair_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No FLAIR regions+lesions content — skipping DCM-SEG")
+
+                                # ── T1 regions-only (native T1 space) ──
+                                reg_t1_nifti, reg_t1_labels, reg_t1_ok = executor.submit(
+                                    msxplain.create_regions_nifti_and_labels,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if reg_t1_ok:
+                                    logger.info("Converting T1 regions-only NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        reg_t1_nifti, reg_t1_labels,
+                                        Path(t1_dir), "t1n_regions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 region masks — skipping regions-only DCM-SEG")
+
+                                # ── T1 regions + lesions ──
+                                rl_t1_nifti, rl_t1_labels, rl_t1_ok = executor.submit(
+                                    msxplain.create_regions_with_lesions_nifti_and_labels,
+                                    lesion_map_path, report_df,
+                                    None  # uses parcellation_dir (T1 space)
+                                ).result()
+
+                                if rl_t1_ok:
+                                    logger.info("Converting T1 regions+lesions NIfTI to DCM-SEG...")
+                                    executor.submit(
+                                        msxplain.nifti_to_dcmseg,
+                                        rl_t1_nifti, rl_t1_labels,
+                                        Path(t1_dir), "t1n_regions_lesions"
+                                    ).result()
+                                else:
+                                    logger.info("No T1 regions+lesions content — skipping DCM-SEG")
+
+                                # Clean up intermediate NIfTI/labels files
+                                for tmp in [
+                                    reg_flair_nifti, reg_flair_labels,
+                                    rl_flair_nifti, rl_flair_labels,
+                                    reg_t1_nifti, reg_t1_labels,
+                                    rl_t1_nifti, rl_t1_labels,
+                                ]:
+                                    if tmp and os.path.exists(tmp):
+                                        os.remove(tmp)
+
+                            except Exception as reg_e:
+                                logger.warning(
+                                    f"Region overlay DCM-SEG generation failed "
+                                    f"(non-blocking): {reg_e}"
+                                )
+                                traceback.print_exc()
+
                             # Upload ALL DCM-SEG outputs to Orthanc
-                            # (includes both original and uncertainty-filtered files)
+                            # (includes original, certainty-filtered, and region overlays)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time
