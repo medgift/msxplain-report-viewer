@@ -2,9 +2,9 @@
 services:
   msxplain_backend:
     build: ./backend
-    image: msxplain_backend:5.2
+    image: msxplain_backend:5.3
     container_name: msxplain_backend
-    user: "${UID:-1000}:${GID:-1000}"  # Use host user ID to avoid permission issues
+    user: "${UID:-1000}:${GID:-1000}" # Use host user ID to avoid permission issues
     volumes:
       # Persist data
       - ./backend/files:/app/files
@@ -23,11 +23,11 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   msxplain_frontend:
     build: ./frontend
-    image: msxplain_frontend:5.2
+    image: msxplain_frontend:5.3
     container_name: msxplain_frontend
     ports:
       - "3001:80"
@@ -35,7 +35,7 @@ services:
       - msxplain_backend
     restart: unless-stopped
     networks:
-      - msxplain-network  
+      - msxplain-network
 
   # ohif_viewer:
   #   image: lluisb3/ohif-webapp:latest
@@ -77,4 +77,3 @@ services:
 networks:
   msxplain-network:
     driver: bridge
-

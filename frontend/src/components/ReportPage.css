@@ -9,7 +9,7 @@
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  padding: 1.5rem 3rem;
+  padding: 1rem 2rem;
   background-color: white;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   position: sticky;
@@ -18,18 +18,9 @@
   min-height: 50px;
 }
 
-.nav-left {
-  justify-self: start;
-}
-
-.nav-center {
-  text-align: center;
-}
-
-.nav-center h2 {
-  color: var(--primary-color);
-  margin: 0;
-}
+.nav-left { justify-self: start; }
+.nav-center { text-align: center; }
+.nav-center h2 { color: var(--primary-color); margin: 0; }
 
 .nav-right {
   justify-self: end;
@@ -45,10 +36,7 @@
   align-items: center;
   font-weight: 500;
 }
-
-.back-button:hover {
-  text-decoration: underline;
-}
+.back-button:hover { text-decoration: underline; }
 
 .action-button {
   background-color: var(--primary-color);
@@ -60,78 +48,11 @@
   border: none;
   cursor: pointer;
 }
-
-.action-button:hover {
-  background-color: var(--primary-color-dark);
-}
+.action-button:hover { background-color: var(--primary-color-dark); }
 
 .report-content {
   flex: 1;
-  padding: 2rem;
-}
-
-.content-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  background: white;
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.report-section {
-  margin-bottom: 2rem;
-}
-
-.subsection {
-  margin-bottom: 1.5rem;
-}
-
-.patient-info {
-  display: flex;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 2rem;
-  margin-bottom: 2rem;
-  background-color: var(--card-background);
-  padding: 1.5rem;
-  border-radius: var(--border-radius);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.patient-info p {
-  margin: 0;
-  flex: 0 1 auto;
-}
-
-.lesion-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  margin: 1.5rem 0;
-}
-
-.stat-card {
-  flex: 1;
-  min-width: 200px;
-  background: #f8f9fa;
-  padding: 1.5rem;
-  border-radius: 8px;
-  text-align: center;
-  border: 1px solid #e9ecef;
-}
-
-.criteria-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
-}
-
-.criteria-card {
-  background: #f8f9fa;
-  padding: 1.5rem;
-  border-radius: 8px;
+  padding: 0.9rem 1.25rem;
 }
 
 .loading-container {
@@ -150,224 +71,323 @@
   margin-bottom: 1rem;
 }
 
-/* Certainty Section Styles */
-.certainty-section {
-  margin: 2rem 0;
-  padding: 2rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+/* ── Dashboard layout ─────────────────────────────────────────────────────── */
+.dashboard {
+  max-width: 1880px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.card {
+  background: white;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  color: white;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  padding: 1rem 1.25rem;
 }
 
-.certainty-section h3 {
-  margin: 0 0 1.5rem 0;
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: white;
+.card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.1rem;
+  color: #1a1a1a;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
 }
 
-/* Two-Column Layout Container */
-.certainty-container-2col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  align-items: start;
-}
-
-/* Left Column: Certainty Values */
-.certainty-left-column {
+/* Card header with an info tooltip alongside the title */
+.card-head {
   display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.certainty-main {
-  margin-bottom: 0;
-}
-
-.certainty-value-card {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: 1.5rem;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 10px;
-  text-align: center;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  gap: 0.5rem;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+.card-head h3 {
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
-.certainty-label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: #555;
-  margin-bottom: 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  cursor: help;
+  outline: none;
 }
-
-.certainty-value {
-  font-size: 2.2rem;
+.info-tip-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid #b0b0b0;
+  color: #888;
+  font-size: 11px;
   font-weight: 700;
-  color: #667eea;
-  margin-bottom: 0.5rem;
-  line-height: 1;
-}
-
-.certainty-description {
-  font-size: 0.85rem;
-  color: #777;
   font-style: italic;
-}
-
-.certainty-details {
-  margin-top: 0;
-  padding: 1.5rem;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  backdrop-filter: blur(10px);
-}
-
-.certainty-details h4 {
-  margin: 0 0 1rem 0;
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.95);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-
-.certainty-lesion-types {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.75rem;
-}
-
-.certainty-type-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.6rem 1rem;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  backdrop-filter: blur(5px);
-}
-
-.type-label {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.9);
-  font-weight: 500;
-}
-
-.type-value {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: white;
-}
-
-/* Right Column: Histogram */
-.certainty-right-column {
+  font-family: Georgia, 'Times New Roman', serif;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  line-height: 1;
+}
+.info-tip:hover .info-tip-icon,
+.info-tip:focus .info-tip-icon {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+.info-tip-bubble {
+  position: absolute;
+  top: 145%;
+  left: 50%;
+  transform: translate(-50%, -4px);
+  width: 290px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 0.65rem 0.8rem;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 50;
+  pointer-events: none;
+}
+.info-tip:hover .info-tip-bubble,
+.info-tip:focus .info-tip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
 }
 
-.histogram-container {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+.muted { color: #888; }
+
+/* Patient info strip */
+.patient-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2.5rem;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  padding: 0.7rem 1.5rem;
+}
+
+.pstrip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pstrip-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #999;
+}
+
+.pstrip-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+/* Two-column band. Both bands share the SAME template so the right-hand
+   certainty cards (and thus the two gaussian plots) line up and render at an
+   identical size. The left column is wider — giving the 3D viewer a wide
+   landscape rectangle and the findings grid room to breathe. */
+.band-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: stretch;
+}
+
+.brain-card {
+  padding: 0;
   overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
 }
+.brain-card > * { width: 100%; }
 
-.histogram-image {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
-.histogram-fallback {
-  width: 100%;
-  height: 320px;
+.certainty-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  border: 3px dashed rgba(102, 126, 234, 0.3);
-  border-radius: 10px;
 }
 
-.histogram-placeholder {
-  width: 100%;
-  height: 320px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 10px;
-  border: 3px dashed rgba(102, 126, 234, 0.3);
+/* Patient-level headline metrics */
+.certainty-headline {
+  display: flex;
+  gap: 3rem;
+  margin-bottom: 0.25rem;
+}
+
+.certainty-metric {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
-  cursor: pointer;
 }
 
-.histogram-placeholder:hover {
-  background: rgba(255, 255, 255, 0.98);
-  border-color: rgba(102, 126, 234, 0.6);
-  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
-}
-
-.histogram-icon {
-  font-size: 3rem;
+.metric-value {
+  font-size: 2.6rem;
+  font-weight: 700;
+  color: #1a1a1a;
   line-height: 1;
 }
 
-.histogram-placeholder p {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #667eea;
-  text-align: center;
+.metric-unit {
+  font-size: 0.85rem;
+  color: #999;
+  margin-top: 0.2rem;
 }
 
-.placeholder-text {
-  font-size: 0.85rem;
+.metric-caption {
+  font-size: 0.8rem;
+  color: #777;
+  margin-top: 0.35rem;
+}
+
+/* Findings */
+.findings-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.findings-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+}
+.findings-total { font-size: 1.1rem; font-weight: 700; color: #1a1a1a; }
+.findings-volume { font-size: 0.85rem; color: #777; }
+
+.region-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  flex: 1;              /* fill the card and vertically centre the cards */
+  align-content: center;
+}
+
+.region-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.5rem;
+  align-items: center;
+  background: #f8f9fa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.region-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  grid-row: 1;
+}
+.region-name { font-size: 0.85rem; font-weight: 600; color: #333; grid-row: 1; }
+.region-count {
+  grid-column: 1 / -1;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.1;
+}
+.region-unit {
+  grid-column: 1 / -1;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #999;
+}
+
+/* Lesion certainty chips — one horizontal row (4×1) */
+.lesion-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.lesion-chip {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: 0.4rem;
+  row-gap: 0.1rem;
+}
+.chip-dot { width: 10px; height: 10px; border-radius: 50%; align-self: center; }
+.chip-label { font-size: 0.8rem; font-weight: 600; color: #333; }
+.chip-value {
+  grid-column: 1 / -1;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1;
+}
+.chip-caption { grid-column: 1 / -1; font-size: 0.72rem; color: #999; }
+
+/* Automated analysis */
+.band-analysis h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1.2rem;
+  color: #1a1a1a;
+}
+
+.criteria-section {
+  margin-bottom: 1rem;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.analysis-block h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: #444;
+}
+.analysis-block p { margin: 0; color: #333; }
+
+.criteria-section h4 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.criteria-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.criteria-card {
+  background: #f8f9fa;
+  border: 1px solid #eee;
+  padding: 0.9rem 1.25rem;
+  border-radius: 8px;
+}
+.criteria-card h5 { margin: 0 0 0.5rem; font-size: 0.85rem; color: #666; }
+.criteria-card p { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.crit-yes { color: #2e7d32; }
+.crit-no { color: #c62828; }
+.crit-na { color: #999; }
+
+.criteria-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.78rem;
   color: #999;
   font-style: italic;
 }
 
-/* Responsive: Stack columns on smaller screens */
-@media (max-width: 1024px) {
-  .certainty-container-2col {
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
-  }
-
-  .histogram-placeholder {
-    height: 250px;
-  }
-}
-
-/* ── 3D Brain Visualisation section ──────────────────────────────────────── */
-.brain3d-section {
-  padding: 0;            /* viewer has its own internal padding / background */
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.brain3d-section h3 {
-  padding: 14px 20px 0;
-  margin: 0 0 10px;
-  font-size: 1rem;
-  color: var(--text-secondary, #555);
-  font-weight: 600;
-  letter-spacing: 0.03em;
+/* Responsive: collapse to single column on narrow screens */
+@media (max-width: 1100px) {
+  .band-2col { grid-template-columns: 1fr; }
+  .analysis-grid { grid-template-columns: 1fr; }
 }

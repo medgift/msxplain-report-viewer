@@ -12,6 +12,7 @@ A web-based application for processing and viewing Multiple Sclerosis (MS) brain
 - **v5.0**: Replaced FreeSurfer/SAMSEG parcellation with WMH-SynthSeg for faster and lighter brain structure segmentation. Added SwinUNETR ensemble inference (5 models) with voxel-level, lesion-level (LLU), and patient-level (PSU) uncertainty quantification. Uncertainty-filtered DICOM-SEG exports (LLU < 0.25 threshold). Upgraded to Python 3.11, PyTorch 2.7 (CUDA 12.8), pytorch-lightning 2.6, and MONAI 1.4. Built dcm2niix from source with JPEG 2000 and JPEG-LS support. False Positive lesions are now excluded from DICOM-SEG exports while remaining visible in the web report.
 - **v5.1**: Replace uncertainty with certainty and add a plot showing the certainty distribution for the test set in the report. Upload to Orthanc a mask with the 4 important atlas regions.
 - **v5.2**: Added 3D brain visualisation in the report page using a Brain3DViewer component. New backend endpoints serve NIfTI files and generate type-coded lesion maps (Periventricular, Juxtacortical, Infratentorial, Deep White Matter) for interactive 3D rendering. Removed hardcoded follow-up and assessment sections from the report.
+- **v5.3**: Redesigned the report page into a horizontal, single-screen dashboard that puts the most important results above the fold on a typical widescreen display: a patient-info strip, a patient-level band (wide 3D/MPR viewer + certainty plot) and a lesion-level band (region findings + certainty plot), with the McDonald criteria, technique and atrophy below. Replaced the backend-rendered matplotlib certainty histogram with new frontend-rendered SVG gaussian plots (`CertaintyGaussian`): a fixed bell curve where the patient (and each lesion type) is placed by its percentile within the test population, annotated with quartile lines (Q1–Q3) and a central 95%-interval bracket, plus an info tooltip explaining the reference distribution. The backend `/api/report` endpoint now returns patient- and lesion-level percentiles computed from `PSU_data.csv` (patient-level) and `LLU_data.csv` (pooled lesion-level), and the obsolete `/api/certainty-histogram` endpoint (and its matplotlib-rendered histogram) was removed from the report API.
 
 ### Repository Structure
 ```
@@ -100,7 +101,8 @@ Before building, ensure these files are in place:
 - `backend/msxplain/model/*` - MSXplain UNet model weights
 - `backend/msxplain/ensemble_models/*` - SwinUNETR ensemble checkpoints (5 models)
 - `backend/hd_bet_models/*` - Brain extraction models
-- `backend/msxplain/configs/PSU_data.csv` - Reference PSU distribution data used to generate the certainty histogram in the report (not tracked in git; obtain separately)
+- `backend/msxplain/configs/PSU_data.csv` - Reference patient-level distribution (test set) used to place the patient on the patient-level certainty plot (not tracked in git; obtain separately)
+- `backend/msxplain/configs/LLU_data.csv` - Reference lesion-level distribution (test set) used to place each lesion type on the lesion-level certainty plot (not tracked in git; obtain separately)
 
 **Frontend:**
 - `frontend/public/*` - Static assets
