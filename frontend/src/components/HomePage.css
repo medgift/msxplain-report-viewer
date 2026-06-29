@@ -14,7 +14,7 @@
 }
 
 .logo {
-  width: 300px;
+  width: 600px;
   height: auto;
   margin-bottom: 1rem;
 }
@@ -24,7 +24,7 @@
   color: var(--primary-color);
   margin-bottom: 1.5rem;
   font-weight: 700;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .subtitle {
@@ -50,7 +50,7 @@
   text-decoration: none;
   transition: all 0.3s ease;
   font-weight: 600;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .primary-button {
@@ -61,7 +61,7 @@
 .primary-button:hover {
   background-color: var(--secondary-color);
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .secondary-button {
@@ -74,5 +74,5 @@
   background-color: var(--primary-color);
   color: white;
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
