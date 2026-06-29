@@ -119,7 +119,7 @@ PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs
 LLU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "LLU_data.csv")
 
 
-def _load_reference_certainties(filepath: str, value_col: str, invert: bool):
+def _load_reference_certainties(filepath: str, value_col: str, invert: bool) -> Optional[np.ndarray]:
     """Load a pooled reference distribution of certainty values from the test set.
 
     Args:

@@ -108,6 +108,10 @@ const CertaintyGaussian = ({ markers = [], accent = '#2196f3', showValueLabels =
     return crowded ? -26 : -12;
   };
 
+  // Markers were provided but none could be placed (e.g. reference CSVs missing,
+  // so percentiles came back null). Show an explicit notice instead of an empty bell.
+  const noPlaceable = markers.length > 0 && placed.length === 0;
+
   return (
     <svg
       className="certainty-gaussian"
@@ -170,6 +174,14 @@ const CertaintyGaussian = ({ markers = [], accent = '#2196f3', showValueLabels =
           </g>
         );
       })}
+
+      {/* fallback when markers exist but no percentile could be placed */}
+      {noPlaceable && (
+        <text x={W / 2} y={baseline / 2} textAnchor="middle"
+              className="cg-empty-label">
+          Reference distribution unavailable
+        </text>
+      )}
     </svg>
   );
 };
