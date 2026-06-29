@@ -7,7 +7,8 @@ import './Brain3DViewer.css';
  * Used to build both the NiiVue LUT and the UI legend.
  */
 const LESION_COLORS = [
-  // idx 0 = background → transparent (not listed)
+  // entries map to label values 1..4; value 0 (background) is transparent and
+  // intentionally not listed here, so array index i corresponds to label i+1.
   { label: 'Periventricular',   r: 139, g:   0, b:   0 }, // 1
   { label: 'Juxtacortical',     r: 255, g: 102, b: 102 }, // 2
   { label: 'Infratentorial',    r:   0, g:   0, b: 139 }, // 3

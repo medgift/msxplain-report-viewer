@@ -14,6 +14,7 @@ import numpy as np
 import pydicom
 import requests
 from typing import List, Dict, Optional
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
@@ -80,7 +81,7 @@ def _safe_path(root: Path, *segments: str) -> Path:
         HTTPException 403: If the resolved path escapes *root*.
     """
     candidate = (root / os.path.join(*segments)).resolve()
-    if not str(candidate).startswith(str(root)):
+    if not candidate.is_relative_to(root):
         raise HTTPException(status_code=403, detail="Invalid path parameters.")
     return candidate
 
@@ -119,8 +120,14 @@ PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs
 LLU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "LLU_data.csv")
 
 
+@lru_cache(maxsize=8)
 def _load_reference_certainties(filepath: str, value_col: str, invert: bool) -> Optional[np.ndarray]:
     """Load a pooled reference distribution of certainty values from the test set.
+
+    The result is cached per (filepath, value_col, invert): reference
+    distributions are static deployment artifacts, so this avoids re-parsing the
+    CSV on every /api/report request. A missing file caches as None for the
+    process lifetime — provision the CSV before startup, or restart after adding.
 
     Args:
         filepath: Path to the reference CSV.

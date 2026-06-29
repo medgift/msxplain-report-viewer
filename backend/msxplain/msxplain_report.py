@@ -601,7 +601,9 @@ class MSXplainReport:
         lesion_img = sitk.ReadImage(str(lesion_map_path))
         lesion_data = sitk.GetArrayFromImage(lesion_img)
 
-        combined_data = np.zeros_like(lesion_data, dtype=np.uint8)
+        # uint16: lesions are labelled 1..N and regions N+1.., which can exceed
+        # 255 for high lesion-burden studies and would overflow uint8.
+        combined_data = np.zeros_like(lesion_data, dtype=np.uint16)
         for old_id, new_id in remap.items():
             combined_data[lesion_data == old_id] = new_id
 
@@ -645,11 +647,14 @@ class MSXplainReport:
         labels_df = pd.DataFrame(labels_rows, columns=["roi_id", "roi_name"])
         labels_df.to_csv(labels_path, index=False, header=False)
 
+        has_content = bool((combined_data > 0).any())
         logger.info(
             f"Regions+lesions NIfTI saved to {output_path} "
             f"({n_lesion_labels} lesions + {region_label_id - n_lesion_labels - 1} regions)"
         )
-        return Path(output_path), Path(labels_path), True
+        if not has_content:
+            logger.warning("Regions+lesions map is empty (no lesions and no region masks)")
+        return Path(output_path), Path(labels_path), has_content
 
     def create_filtered_lesion_map(self, lesion_map_path, report_df, suffix="_dcmseg"):
         """Create a filtered lesion map without False Positive lesions for DCM-SEG conversion

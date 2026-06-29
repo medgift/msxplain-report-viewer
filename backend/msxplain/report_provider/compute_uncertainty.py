@@ -165,7 +165,7 @@ def compute_uncertainties(output_dir: str, n_samples: int, proba_threshold: floa
         n_samples (int): Number of ensemble samples to use
         proba_threshold (float): Probability threshold for binary segmentation
         n_jobs (int, optional): Number of parallel workers. Defaults to 4.
-        l_min (int, optional): Minimum lesion size - 1. Defaults to 2.
+        l_min (int, optional): Minimum lesion size - 1. Defaults to 3.
         class_num (int, optional): Class number for binary segmentation. Defaults to 1.
         temperature (float, optional): Temperature scaling for softmax. Defaults to 1.0.
         probs (bool, optional): Whether npz contains probabilities. Defaults to True.
