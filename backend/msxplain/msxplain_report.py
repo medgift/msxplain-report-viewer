@@ -376,7 +376,7 @@ class MSXplainReport:
             num_workers=0,
             cache_rate=0.1,
             threshold=0.3,
-            force_cuda=True
+            force_cuda=None  # auto-detect GPU/CPU
         )
         
         return prediction_file

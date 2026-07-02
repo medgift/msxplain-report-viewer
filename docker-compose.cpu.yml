@@ -1,0 +1,17 @@
+# CPU-only override for MSXplain.
+#
+# The base docker-compose.yml reserves an NVIDIA GPU, so on a host without the
+# NVIDIA driver + nvidia-container-toolkit `docker compose up` fails with:
+#   could not select device driver "nvidia" with capabilities: [[gpu]]
+#
+# This override removes that reservation so the backend starts on CPU-only
+# hosts. The application code auto-detects GPU vs CPU at runtime, so no other
+# changes are needed. Note: CPU inference is dramatically slower than GPU.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up
+#
+# Requires Docker Compose v2.24.4+ for the `!reset` tag.
+services:
+  msxplain_backend:
+    deploy: !reset null

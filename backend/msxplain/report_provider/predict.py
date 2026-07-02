@@ -18,7 +18,7 @@ start_time = time.time()
 
 logger = logging.getLogger(__name__)
 
-def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcellation_dir, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=True):
+def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcellation_dir, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=None):
     """Run MSXplain prediction
     
     Args:
@@ -29,19 +29,21 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcella
         num_workers (int): Number of workers for data loading
         cache_rate (float): Cache rate for data loading
         threshold (float): Threshold for binary prediction
-        force_cuda (bool): Force CUDA availability
+        force_cuda (bool|None): Force CUDA on (True) or off (False). When None
+            (default), auto-detect the device from the available hardware.
     """
     try:
         start_time = time.time()
-        
-        # Override CUDA availability if requested
-        if force_cuda:
-            logger.info("Running MS Lesion Prediction IN CUDA")
+
+        # Override CUDA availability only if explicitly requested; otherwise
+        # let torch auto-detect so the same code runs on GPU or CPU-only hosts.
+        if force_cuda is True:
+            logger.info("Running MS Lesion Prediction: forcing CUDA ON")
             torch.cuda.is_available = lambda : True
-        else:
-            logger.info("Running MS Lesion Prediction IN CPU")
+        elif force_cuda is False:
+            logger.info("Running MS Lesion Prediction: forcing CPU")
             torch.cuda.is_available = lambda : False
-        
+
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {device}")
         torch.multiprocessing.set_sharing_strategy('file_system')

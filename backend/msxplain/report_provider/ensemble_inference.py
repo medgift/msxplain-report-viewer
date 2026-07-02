@@ -210,10 +210,17 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
         models_path (str): Path to trained models directory.
     """
     
-    # Setup
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    accelerator = "gpu"
+    # Setup: derive the accelerator from the actual hardware so the same
+    # image runs on GPU or CPU-only hosts (no MisconfigurationException on CPU).
+    if torch.cuda.is_available():
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        accelerator = "gpu"
+    else:
+        accelerator = "cpu"
     device = 1
+    # Checkpoints may have been saved on CUDA; map to the available device so
+    # torch.load doesn't crash trying to deserialize onto a missing GPU.
+    map_location = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Seed RNGs for reproducibility (given identical inputs)
     seed = 42
@@ -294,7 +301,7 @@ def run_ensemble_inference(flair_path: str, mprage_path: str, output_path: str, 
         
         # Load model
         net = Net(config_dict)
-        ckpt = torch.load(ckpt_file, weights_only=True)
+        ckpt = torch.load(ckpt_file, weights_only=True, map_location=map_location)
         net.load_state_dict(ckpt["state_dict"])
         
         # Create trainer
