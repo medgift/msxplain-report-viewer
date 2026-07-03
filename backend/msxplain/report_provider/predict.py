@@ -18,7 +18,7 @@ start_time = time.time()
 
 logger = logging.getLogger(__name__)
 
-def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcellation_dir, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=True):
+def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcellation_dir, num_workers=0, cache_rate=0.1, threshold=0.3, force_cuda=None):
     """Run MSXplain prediction
     
     Args:
@@ -29,21 +29,22 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcella
         num_workers (int): Number of workers for data loading
         cache_rate (float): Cache rate for data loading
         threshold (float): Threshold for binary prediction
-        force_cuda (bool): Force CUDA availability
+        force_cuda (bool|None): Force CUDA on (True) or off (False). When None
+            (default), auto-detect the device from the available hardware.
     """
     try:
         start_time = time.time()
-        
-        # Override CUDA availability if requested
-        if force_cuda:
-            logger.info("Running MS Lesion Prediction IN CUDA")
-            torch.cuda.is_available = lambda : True
+
+        # Decide the device locally without mutating global torch state (which
+        # would leak across threads/other modules). Honor an explicit override,
+        # otherwise auto-detect so the same code runs on GPU or CPU-only hosts.
+        if force_cuda is None:
+            use_cuda = torch.cuda.is_available()
         else:
-            logger.info("Running MS Lesion Prediction IN CPU")
-            torch.cuda.is_available = lambda : False
-        
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logger.info(f"Using device: {device}")
+            use_cuda = bool(force_cuda)
+
+        device = torch.device('cuda' if use_cuda else 'cpu')
+        logger.info(f"Running MS Lesion Prediction on device: {device}")
         torch.multiprocessing.set_sharing_strategy('file_system')
         
         # Model parameters
@@ -69,10 +70,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcella
         
         # Load model weights
         logger.info(f"Loading model weights from {model_checkpoint}")
-        if torch.cuda.is_available():
-            model.load_state_dict(torch.load(model_checkpoint, map_location='cuda'))
-        else:
-            model.load_state_dict(torch.load(model_checkpoint, map_location='cpu'))
+        model.load_state_dict(torch.load(model_checkpoint, map_location=device))
         
         model.eval()
         activation = torch.nn.Softmax(dim=1)
@@ -114,10 +112,7 @@ def predict_msxplain(input_val_paths, input_prefixes, model_checkpoint, parcella
             logger.info(f"Processing input file: {input_file}")
             
             # Move inputs to device
-            if torch.cuda.is_available():
-                inputs = data["inputs"].cuda()
-            else:
-                inputs = data["inputs"]
+            inputs = data["inputs"].to(device)
             
             inputs.requires_grad_()
             
