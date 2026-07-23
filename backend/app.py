@@ -1,11 +1,12 @@
 import traceback
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
 import time
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.background import BackgroundTasks
 import uvicorn
 import pandas as pd
@@ -21,6 +22,14 @@ from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
 import scipy.stats as stats
 import logging
 
+from alembic import command
+from alembic.config import Config as AlembicConfig
+
+from auth import AuthMiddleware, current_user_id, VIEWER_COOKIE, _bearer_token
+from db import crud, models
+from db.engine import get_db, session_scope, wait_for_db
+from db.summary import compute_report_summary
+
 logger = logging.getLogger(__name__)
 
 # Configure logging at application startup
@@ -35,27 +44,77 @@ def format_elapsed_time(elapsed_seconds):
     minutes, seconds = divmod(remainder, 60)
     return f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
 
-app = FastAPI()
+def _run_migrations() -> None:
+    """Apply Alembic migrations to head at startup (after the DB is reachable)."""
+    wait_for_db()
+    cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+    cfg.set_main_option(
+        "script_location", os.path.join(os.path.dirname(__file__), "alembic")
+    )
+    command.upgrade(cfg, "head")
+    logger.info("Database migrations applied.")
 
-# Global variable to store processing status
-processing_status: Dict[str, dict] = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        _run_migrations()
+    except Exception:
+        logger.error("Database migration failed at startup")
+        traceback.print_exc()
+        raise
+    # Reconcile runs left 'processing' by a previous crash/restart: the pipeline
+    # runs in-process, so none of them can still be running now.
+    try:
+        with session_scope() as db:
+            orphaned = crud.fail_orphaned_processing_runs(db)
+        if orphaned:
+            logger.warning(
+                "Marked %d orphaned processing run(s) as failed at startup",
+                orphaned,
+            )
+    except Exception:
+        logger.error("Could not reconcile orphaned runs at startup")
+        traceback.print_exc()
+    yield
+
+
+# Docs are disabled in this deployment: no public /docs, /redoc or /openapi.json.
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+# GPU pipeline runs are serialized to one at a time. The single-flight guard
+# lives in the DB (crud.try_start_processing, an advisory-locked check-and-set
+# on Run.status), so it holds across workers/processes and survives restarts —
+# unlike the previous in-memory lock.
 
 # Define constants for file paths
 UPLOAD_FOLDER = "files/uploads"
 PROCESSED_FOLDER = "files/processed"
 
-# Get CORS origins from environment variable
+# Upload guards
+MAX_UPLOAD_FILES = 20000            # per request (a DICOM series is many files)
+MAX_UPLOAD_BYTES = 2 * 1024 ** 3    # 2 GiB per request
+
+# Get CORS origins from environment variable. In production this is the single
+# public origin; "*" is only for local development.
 cors_origins = os.getenv("CORS_ORIGINS", "*")
-# Convert to list if comma-separated, otherwise use as wildcard
 allowed_origins = cors_origins.split(",") if cors_origins != "*" else ["*"]
 
-# Add CORS middleware
+# NOTE ON MIDDLEWARE ORDER: Starlette runs the LAST-added middleware outermost.
+# AuthMiddleware is added first and CORS second, so CORS wraps auth and even a
+# 401 from AuthMiddleware carries the correct CORS headers.
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Create necessary directories
@@ -84,6 +143,138 @@ def _safe_path(root: Path, *segments: str) -> Path:
     if not candidate.is_relative_to(root):
         raise HTTPException(status_code=403, detail="Invalid path parameters.")
     return candidate
+
+
+@app.get("/api/health")
+async def health():
+    """Public liveness probe (allow-listed in AuthMiddleware)."""
+    return {"status": "ok"}
+
+
+# ── OHIF viewer: session cookie + read-only DICOMweb proxy ────────────────
+# The browser-side OHIF viewer must reach Orthanc's DICOMweb, but Orthanc is
+# never exposed to users. These two endpoints are the only, tightly-scoped
+# bridge:
+#   * POST /api/viewer-session issues a short-lived HttpOnly cookie so the
+#     viewer's requests are authenticated without OHIF having to set headers.
+#   * GET  /api/dicom-web/* streams QIDO/WADO reads to Orthanc (with Orthanc's
+#     own credentials). Only GET is defined, so STOW uploads and DELETEs return
+#     405 — the viewer can read images but never modify or export via the PACS.
+VIEWER_COOKIE_MAX_AGE = 3600  # seconds; matches the Supabase token lifetime
+
+# Dedicated audit logger. All viewer access to patient imaging flows through
+# the two endpoints below, so this is the single place to record "who viewed
+# what". It logs user id + study/resource UIDs only (never PHI), so the audit
+# trail is itself safe to retain. Route "msxplain.audit" to its own durable
+# sink in deployment if you need a separable, tamper-evident log.
+audit_logger = logging.getLogger("msxplain.audit")
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for audit lines (real IP is behind the proxy)."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+# Hop-by-hop and length/encoding headers must not be copied verbatim onto the
+# streamed response (Starlette re-chunks the body itself).
+_DICOMWEB_STRIP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "content-encoding",
+    "content-length",
+}
+
+
+@app.post("/api/viewer-session")
+def open_viewer_session(request: Request):
+    """Set the HttpOnly cookie the OHIF viewer uses to authenticate DICOMweb.
+
+    The caller is already authenticated (AuthMiddleware validated the bearer);
+    we copy that access token into a cookie scoped to the DICOMweb proxy path
+    so the browser attaches it automatically to same-origin viewer requests.
+    OHIF itself never sees or handles the token.
+    """
+    token = _bearer_token(request.headers.get("Authorization", ""))
+    if not token:
+        # Should be unreachable (middleware requires it), but never set an
+        # empty cookie.
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Secure flag follows the external scheme (Traefik terminates TLS and sets
+    # X-Forwarded-Proto); over plain-http local dev the cookie stays non-secure
+    # so the browser still stores it.
+    is_https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp = Response(status_code=204)
+    resp.set_cookie(
+        key=VIEWER_COOKIE,
+        value=token,
+        max_age=VIEWER_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=is_https,
+        samesite="lax",
+        path="/api/dicom-web",
+    )
+    audit_logger.info(
+        "viewer-session opened user=%s ip=%s",
+        current_user_id(request),
+        _client_ip(request),
+    )
+    return resp
+
+
+@app.get("/api/dicom-web/{path:path}")
+def dicomweb_proxy(path: str, request: Request):
+    """Authenticated, read-only DICOMweb passthrough to Orthanc for OHIF."""
+    from msxplain.orthanc.upload_to_orthanc import ORTHANC_URL, orthanc_auth
+
+    upstream_url = f"{ORTHANC_URL}/dicom-web/{path}"
+    # Forward only content negotiation; the user's Authorization/cookie is NOT
+    # forwarded — we authenticate to Orthanc with its own credentials.
+    fwd_headers = {}
+    accept = request.headers.get("Accept")
+    if accept:
+        fwd_headers["Accept"] = accept
+
+    try:
+        upstream = requests.get(
+            upstream_url,
+            params=list(request.query_params.multi_items()),
+            headers=fwd_headers,
+            auth=orthanc_auth(),
+            stream=True,
+            timeout=300,
+        )
+    except Exception as exc:
+        audit_logger.warning(
+            "dicomweb user=%s ip=%s status=ERROR path=%s",
+            current_user_id(request), _client_ip(request), path,
+        )
+        logger.error(f"DICOMweb upstream error: {exc}")
+        raise HTTPException(status_code=502, detail="DICOM backend unavailable.")
+
+    # Audit trail: who fetched which DICOMweb resource (path carries the
+    # study/series/instance UIDs; no PHI is logged).
+    audit_logger.info(
+        "dicomweb user=%s ip=%s status=%s path=%s",
+        current_user_id(request),
+        _client_ip(request),
+        upstream.status_code,
+        path,
+    )
+
+    resp_headers = {
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _DICOMWEB_STRIP_HEADERS
+    }
+    return StreamingResponse(
+        upstream.iter_content(chunk_size=64 * 1024),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=upstream.headers.get("Content-Type"),
+    )
 
 
 # Create a thread pool executor
@@ -311,9 +502,12 @@ async def get_nifti_file(run_id: str, patient_name: str, session: str, filename:
 
 
 # Route to get data from the Excel file
-@app.get("/api/report/{run_id}/{patient_name}/{session}")          
-async def get_report(run_id: str, patient_name: str, session: str):
+@app.get("/api/report/{run_id}/{patient_name}/{session}")
+async def get_report(run_id: str, patient_name: str, session: str, db=Depends(get_db)):
     try:
+        # Directory name (path param), captured before the DICOM read may
+        # overwrite `patient_name` with the DICOM PatientName below.
+        dir_patient = patient_name
         patient_dir = _safe_path(_PROCESSED_ROOT, run_id, patient_name, session)
 
         # Construct the correct file path using run_id and session
@@ -341,73 +535,113 @@ async def get_report(run_id: str, patient_name: str, session: str):
         infratentorial_lesions = lesion_counts.get('Infratentorial', 0)
         wm_lesions = lesion_counts.get('Deep White Matter', 0)
         
+        # Prefer cached demographics + study UID from the DB to skip the
+        # per-request DICOM read and Orthanc query. Falls back to computing
+        # (and then caching) them when the cache is cold.
+        _meta = None
+        try:
+            _meta = crud.get_report_meta(db, run_id, dir_patient, session)
+        except Exception as meta_e:
+            logger.warning(f"Could not read cached report meta: {meta_e}")
+
+        _demographics_cached = bool(
+            _meta and _meta.get("patient_id") and _meta.get("birth_date")
+        )
+        _study_uid_cached = bool(_meta and _meta.get("study_instance_uid"))
+
         # Load DICOM file and extract metadata from the uploaded folder
         dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, patient_name)
-        
-        try:
-            dicom_date_folder = next((f for f in os.listdir(dicom_base_folder) 
-                                    if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
-            if dicom_date_folder:
-                dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder)) 
-                                         if 'flair' in f.lower()), None)
-                if dicom_flair_folder:
-                    dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
-                    dicom_files = [f for f in os.listdir(dicom_folder)]
-                    if dicom_files:
-                        dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
-                        dicom_data = pydicom.dcmread(dicom_file_path)
-                        patient_name = str(dicom_data.PatientName)
-                        patient_id = str(dicom_data.PatientID)
-                        patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
-                        patient_sex = str(dicom_data.PatientSex)
+
+        if _demographics_cached:
+            patient_name = _meta.get("display_name") or dir_patient
+            patient_id = _meta.get("patient_id") or "Unknown"
+            patient_birth_date = _meta.get("birth_date") or "Unknown"
+            patient_sex = _meta.get("sex") or "Unknown"
+        else:
+            try:
+                dicom_date_folder = next((f for f in os.listdir(dicom_base_folder)
+                                        if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
+                if dicom_date_folder:
+                    dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder))
+                                             if 'flair' in f.lower()), None)
+                    if dicom_flair_folder:
+                        dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
+                        dicom_files = [f for f in os.listdir(dicom_folder)]
+                        if dicom_files:
+                            dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
+                            dicom_data = pydicom.dcmread(dicom_file_path)
+                            patient_name = str(dicom_data.PatientName)
+                            patient_id = str(dicom_data.PatientID)
+                            patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
+                            patient_sex = str(dicom_data.PatientSex)
+                        else:
+                            patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
                     else:
                         patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
                 else:
                     patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
-            else:
+            except Exception as e:
+                logger.error(f"Error reading DICOM metadata: {str(e)}")
                 patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
-        except Exception as e:
-            logger.error(f"Error reading DICOM metadata: {str(e)}")
-            patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
 
-        # Get StudyInstanceUID from Orthanc for this patient
-        study_instance_uid = None
-        try:
-            # Query Orthanc for studies by patient ID using the tools/find API
-            orthanc_url = "http://orthanc:8042"
-            
-            # Use Orthanc's tools/find API to search for studies by PatientID
-            search_payload = {
-                "Level": "Study",
-                "Query": {
-                    "PatientID": patient_id
-                },
-                "Expand": True
-            }
-            
-            search_response = requests.post(
-                f"{orthanc_url}/tools/find",
-                json=search_payload
-            )
-            
-            if search_response.status_code == 200:
-                studies = search_response.json()
-                logger.info(f"Found {len(studies)} studies for patient {patient_id}")
-                if studies:
-                    # Get the StudyInstanceUID from the first study
-                    # The response is a list of study resources with full details
-                    first_study = studies[0]
-                    study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
-                    logger.info(f"StudyInstanceUID: {study_instance_uid}")
+        # Get StudyInstanceUID from Orthanc for this patient (unless cached).
+        study_instance_uid = _meta.get("study_instance_uid") if _study_uid_cached else None
+        if not _study_uid_cached:
+            try:
+                # Query Orthanc for studies by patient ID using the tools/find API
+                orthanc_url = "http://orthanc:8042"
+
+                # Use Orthanc's tools/find API to search for studies by PatientID
+                search_payload = {
+                    "Level": "Study",
+                    "Query": {
+                        "PatientID": patient_id
+                    },
+                    "Expand": True
+                }
+
+                from msxplain.orthanc.upload_to_orthanc import orthanc_auth
+                search_response = requests.post(
+                    f"{orthanc_url}/tools/find",
+                    json=search_payload,
+                    auth=orthanc_auth()
+                )
+
+                if search_response.status_code == 200:
+                    studies = search_response.json()
+                    logger.info(f"Found {len(studies)} studies for patient {patient_id}")
+                    if studies:
+                        # Get the StudyInstanceUID from the first study
+                        first_study = studies[0]
+                        study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
+                        logger.info(f"StudyInstanceUID: {study_instance_uid}")
+                    else:
+                        logger.warning(f"No studies found for patient {patient_id}")
                 else:
-                    logger.warning(f"No studies found for patient {patient_id}")
-            else:
-                logger.error(f"Failed to query Orthanc: {search_response.status_code}")
-        except Exception as e:
-            logger.error(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
-            import traceback
-            traceback.print_exc()
-        
+                    logger.error(f"Failed to query Orthanc: {search_response.status_code}")
+            except Exception as e:
+                logger.error(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
+                traceback.print_exc()
+
+        # Cache freshly-computed demographics + study UID for future requests.
+        if not (_demographics_cached and _study_uid_cached):
+            try:
+                with session_scope() as _cache_db:
+                    crud.upsert_session(
+                        _cache_db, run_id, dir_patient, session,
+                        study_instance_uid=study_instance_uid,
+                        report_csv_present=True,
+                        demographics={
+                            "display_name": patient_name if patient_name != "Unknown" else None,
+                            "patient_id": patient_id if patient_id != "Unknown" else None,
+                            "birth_date": patient_birth_date if patient_birth_date != "Unknown" else None,
+                            "sex": patient_sex if patient_sex != "Unknown" else None,
+                            "institution_name": None,
+                        },
+                    )
+            except Exception as cache_e:
+                logger.warning(f"Could not cache report meta: {cache_e}")
+
         # Check if McDonald Criteria is fulfilled
         lesion_areas = [periventricular_lesions, juxtacortical_lesions, infratentorial_lesions, wm_lesions]
         affected_areas = sum(1 for lesion in lesion_areas if lesion > 0)
@@ -537,122 +771,163 @@ async def get_report(run_id: str, patient_name: str, session: str):
 
 
 @app.post("/api/upload-dicoms")
-async def upload_dicoms(files: List[UploadFile] = File(...), run_id: str = None):
+async def upload_dicoms(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    run_id: str = None,
+):
     try:
-        # Use provided run_id or generate new one
+        # Use provided run_id or generate new one. Reject client-supplied
+        # run_ids that try to escape the uploads root.
         if not run_id:
             run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            
-        base_dir = os.path.join(UPLOAD_FOLDER, run_id)
-        
-        # Create base directory
+
+        base_dir = _safe_path(_UPLOAD_ROOT, run_id)
         os.makedirs(base_dir, exist_ok=True)
-        
-        # Save all files maintaining their structure
+
+        if len(files) > MAX_UPLOAD_FILES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Too many files in one request (max {MAX_UPLOAD_FILES}).",
+            )
+
+        total_bytes = 0
+        CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
         for file in files:
-            filename = '/'.join(file.filename.split('/')[1:])
-            file_path = os.path.join(base_dir, filename)
-            
+            # file.filename is fully client-controlled. Strip the leading
+            # component (the browser prepends the picked folder name) and run
+            # the remaining parts through _safe_path to block traversal
+            # (../, absolute paths, zip-slip) -> arbitrary file write / RCE.
+            raw = file.filename or ""
+            parts = [p for p in raw.split("/")[1:] if p not in ("", ".", "..")]
+            if not parts:
+                continue
+            file_path = _safe_path(_UPLOAD_ROOT, run_id, *parts)
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            # Save file in chunks
-            CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
+
             with open(file_path, "wb") as buffer:
                 while True:
                     chunk = await file.read(CHUNK_SIZE)
                     if not chunk:
                         break
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPLOAD_BYTES:
+                        buffer.close()
+                        os.remove(file_path)
+                        raise HTTPException(
+                            status_code=413,
+                            detail="Upload exceeds the maximum allowed size.",
+                        )
                     buffer.write(chunk)
-        
-        # Get list of patient directories
-        patient_dirs = set()
-        for root, dirs, _ in os.walk(base_dir):
-            for d in dirs:
-                if os.path.exists(os.path.join(root, d)):
-                    patient_dirs.add(d)
-                    
+
+        # Get list of patient directories (top-level dirs under the run).
+        patient_dirs = [
+            d
+            for d in os.listdir(base_dir)
+            if os.path.isdir(os.path.join(base_dir, d))
+        ]
+
+        # Record the run and its patients (idempotent across chunked batches).
+        owner_id = current_user_id(request)
+        with session_scope() as session:
+            crud.register_upload(session, run_id, patient_dirs, owner_id=owner_id)
 
         return JSONResponse(
             content={
-                "message": f"Files uploaded successfully. Batch processed.",
+                "message": "Files uploaded successfully. Batch processed.",
                 "run_id": run_id,
-                "patients": list(patient_dirs)
+                "patients": patient_dirs,
             },
-            status_code=200
+            status_code=200,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in upload: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
-            content={"error": str(e)},
-            status_code=500
+            content={"error": "Upload failed."},
+            status_code=500,
         )
 
 @app.post("/api/process-scans/{run_id}")
 async def start_processing(run_id: str, background_tasks: BackgroundTasks):
+    claimed = False
     try:
-        base_dir = os.path.join(UPLOAD_FOLDER, run_id)
-        
+        base_dir = _safe_path(_UPLOAD_ROOT, run_id)
+
         if not os.path.exists(base_dir):
             return JSONResponse({
                 'error': f"Upload directory not found: {run_id}"
             }, status_code=404)
-        
-        
+
         # Get patient directories inside DICOMS folder
-        patient_dirs = [item for item in os.listdir(base_dir) 
+        patient_dirs = [item for item in os.listdir(base_dir)
                        if os.path.isdir(os.path.join(base_dir, item))]
-        
+
         if not patient_dirs:
             return JSONResponse({
                 'error': "No patient directories found"
             }, status_code=400)
-        
+
         logger.info(f"Found {len(patient_dirs)} patient directories: {patient_dirs}")
-        
-        # Initialize processing status
-        processing_status[run_id] = {
-            'total_patients': len(patient_dirs),
-            'patients': {
-                patient_dir: {
-                    'status': 'pending',
-                    'steps': {
-                        'preprocessing': 'pending',
-                        'msxplain': 'pending',
-                        'report': 'pending'
-                    }
-                }
-                for patient_dir in patient_dirs
-            }
-        }
-        
+
+        # Single-flight: atomically claim the one global processing slot (races
+        # are resolved in the DB, so this holds across workers and restarts).
+        # Also seeds DB status, replacing the old in-memory dict.
+        with session_scope() as session:
+            claimed = crud.try_start_processing(session, run_id, patient_dirs)
+
+        if not claimed:
+            with session_scope() as session:
+                active = crud.get_active_processing_run(session)
+            return JSONResponse({
+                'error': f"Another run ({active}) is currently processing."
+            }, status_code=409)
+
         # Add to background tasks
-        background_tasks.add_task(process_all_patients, run_id, base_dir, patient_dirs)
-        
+        background_tasks.add_task(process_all_patients, run_id, str(base_dir), patient_dirs)
+
         return JSONResponse({
             'message': f"Processing started for {len(patient_dirs)} patients",
-'total_patients': len(patient_dirs),
+            'total_patients': len(patient_dirs),
             'patients': patient_dirs
         })
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
+        # Release the slot if we claimed it before failing to schedule the run.
+        if claimed:
+            try:
+                with session_scope() as session:
+                    crud.set_run_status(session, run_id, models.RUN_FAILED)
+            except Exception:
+                logger.error("Could not release processing slot after failure")
         logger.error(f"Error starting processing: {str(e)}")
         traceback.print_exc()
         return JSONResponse({
-            'error': str(e)
+            'error': "Failed to start processing."
         }, status_code=500)
 
 def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
     """Process all patients sequentially with progress updates"""
+
+    def _set_status(patient, value):
+        with session_scope() as db:
+            crud.set_patient_status(db, run_id, patient, value)
+
+    def _set_step(patient, step, value):
+        with session_scope() as db:
+            crud.set_patient_step(db, run_id, patient, step, value)
+
     try:
         logger.info(f"Starting processing for run {run_id}...")
-        global processing_status
 
         for i, patient_dir in enumerate(patient_dirs):
             try:
-                status = processing_status[run_id]['patients'][patient_dir]
-                status['status'] = 'processing'
-                
+                _set_status(patient_dir, models.PROCESSING)
+
                 logger.info(f"[{i+1}/{len(patient_dirs)}] Processing patient: {patient_dir}")
                 
                 # Create thread pool for CPU-intensive tasks
@@ -684,7 +959,7 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             upload_to_orthanc(t1_dir)
 
                             # Preprocessing step
-                            status['steps']['preprocessing'] = 'processing'
+                            _set_step(patient_dir, 'preprocessing', models.PROCESSING)
                             msxplain = MSXplainReport(
                                 flair_dir=flair_dir,
                                 t1_dir=t1_dir,
@@ -702,22 +977,22 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             elapsed = time.time() - series_start_time
                             logger.info(f"Preprocessing completed in {format_elapsed_time(elapsed)}")
                             
-                            status['steps']['preprocessing'] = 'completed'
+                            _set_step(patient_dir, 'preprocessing', models.COMPLETED)
 
                             # MSXplain step
-                            
+
                             # Start timing
                             pipeline_start_time = time.time()
-                            
-                            status['steps']['msxplain'] = 'processing'
+
+                            _set_step(patient_dir, 'msxplain', models.PROCESSING)
                             prediction_file = executor.submit(
                                 msxplain.run_msxplain, preprocessed_files
                             ).result()
-                            
-                            status['steps']['msxplain'] = 'completed'
+
+                            _set_step(patient_dir, 'msxplain', models.COMPLETED)
 
                             # Report generation step
-                            status['steps']['report'] = 'processing'
+                            _set_step(patient_dir, 'report', models.PROCESSING)
                             report_df = executor.submit(
                                 msxplain.generate_report, prediction_file
                             ).result()
@@ -738,9 +1013,27 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 msxplain.register_lesion_map_to_flair_ants
                             ).result()
                             
-                            status['steps']['report'] = 'completed'
-                            status['status'] = 'completed'
-                            
+                            _set_step(patient_dir, 'report', models.COMPLETED)
+                            _set_status(patient_dir, models.COMPLETED)
+
+                            # Persist the session + its summary metrics. The DB
+                            # is the source of truth for listing/status, so this
+                            # must happen once the report.csv exists.
+                            try:
+                                summary = compute_report_summary(session_output_dir)
+                                with session_scope() as db:
+                                    if summary is not None:
+                                        crud.upsert_report_summary(
+                                            db, run_id, patient_dir, session, summary
+                                        )
+                                    else:
+                                        crud.upsert_session(
+                                            db, run_id, patient_dir, session,
+                                            report_csv_present=False,
+                                        )
+                            except Exception as sum_e:
+                                logger.warning(f"Failed to persist report summary: {sum_e}")
+
                             lesion_map_path = Path(os.path.join(session_output_dir, "lesion_map.nii.gz"))
                             lesion_map_flair_space_path = Path(os.path.join(session_output_dir, "lesion_map_flair_space_ants.nii.gz"))
                             
@@ -937,16 +1230,22 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
             except Exception as e:
                 logger.error(f"Error processing patient {patient_dir}: {str(e)}")
                 traceback.print_exc()
-                status['status'] = 'error'
-                for step in status['steps']:
-                    if status['steps'][step] == 'processing':
-                        status['steps'][step] = 'error'
+                _set_status(patient_dir, models.FAILED)
 
         logger.info(f"All processing completed for run {run_id}")
-        
+        with session_scope() as db:
+            crud.set_run_status(db, run_id, models.RUN_DONE)
+
     except Exception as e:
         logger.error(f"Error in process_all_patients: {str(e)}")
         traceback.print_exc()
+        try:
+            with session_scope() as db:
+                crud.set_run_status(db, run_id, models.RUN_FAILED)
+        except Exception:
+            logger.error("Could not mark run failed")
+    # The single-flight slot is released implicitly: the run is no longer in
+    # 'processing' status once it reaches 'done' or 'failed' above.
 
 def find_input_directories(patient_path):
     """Helper function to find FLAIR and T1 directories"""
@@ -969,49 +1268,16 @@ def find_input_directories(patient_path):
 
 
 @app.get("/api/process-status/{run_id}")
-async def get_process_status(run_id: str):
+def get_process_status(run_id: str, db=Depends(get_db)):
     try:
         logger.debug(f"Getting status for run: {run_id}")
-        
-        # Check if any processing is active
-        if not processing_status:
-            return JSONResponse({
-                'message': 'No active processing',
-                'status': 'inactive',
-                'total_patients': 0,
-                'patients': {}
-            })
-            
-        # First check if run exists in processing_status
-        if run_id in processing_status:
-            return processing_status[run_id]
-            
-        # If not in processing_status, check if run exists in processed folder
-        run_dir = os.path.join(PROCESSED_FOLDER, run_id)
-        if os.path.exists(run_dir):
-            # Create a status object for completed runs
-            all_patients = [
-                patient_dir for patient_dir in os.listdir(run_dir)
-                if os.path.isdir(os.path.join(run_dir, patient_dir))
-            ]
-            
-            return {
-                'status': 'completed',
-                'total_patients': len(all_patients),
-                'patients': {
-                    patient_dir: {
-                        'status': 'completed',
-                        'steps': {
-                            'preprocessing': 'completed',
-                            'msxplain': 'completed',
-                            'report': 'completed'
-                        }
-                    }
-                    for patient_dir in all_patients
-                }
-            }
-        
-        # If run is not found anywhere, return inactive status
+
+        # DB is the source of truth and survives restarts.
+        status = crud.get_run_status_json(db, run_id)
+        if status is not None:
+            return status
+
+        # Run not found anywhere.
         return JSONResponse({
             'message': f'Run {run_id} not found',
             'status': 'inactive',
@@ -1023,85 +1289,20 @@ async def get_process_status(run_id: str):
         logger.error(f"Error getting process status: {str(e)}")
         traceback.print_exc()
         return JSONResponse({
-            'error': str(e),
+            'error': "Error getting process status.",
             'status': 'error'
         }, status_code=500)
 
 @app.get("/api/processed-runs")
-async def get_processed_runs():
+def get_processed_runs(db=Depends(get_db)):
     try:
-        if not os.path.exists(PROCESSED_FOLDER):
-            return []
-            
-        runs = []
-        for run_id in os.listdir(PROCESSED_FOLDER):
-            run_dir = os.path.join(PROCESSED_FOLDER, run_id)
-            if os.path.isdir(run_dir):
-                # Get all patient directories first
-                all_patients = [
-                    patient_dir for patient_dir in os.listdir(run_dir)
-                    if os.path.isdir(os.path.join(run_dir, patient_dir))
-                ]
-                
-                # Create patient entries
-                patients = []
-                for patient_dir in all_patients:
-                    patient_path = os.path.join(run_dir, patient_dir)
-
-                    # Get all sessions for this patient
-                    sessions = [
-                        session for session in os.listdir(patient_path)
-                        if os.path.isdir(os.path.join(patient_path, session))
-                    ]
-                    
-                    # Check status for each session
-                    session_statuses = []
-                    for session in sessions:
-                        session_path = os.path.join(patient_path, session)
-                        report_path = os.path.join(session_path, f"report.csv")
-                        
-                        # Check if session is in processing status
-                        run_status = processing_status.get(run_id, {}).get('patients', {}).get(patient_dir, {})
-                        if run_status and any(step == 'processing' for step in run_status.get('steps', {}).values()):
-                            status = "Processing"
-                        else:
-                            status = "Complete" if os.path.exists(report_path) else "Processing"
-                        
-                        session_statuses.append({
-                            "date": session,
-                            "status": status,
-                            "report": os.path.exists(report_path)
-                        })
-                    
-                    # Add patient with all their sessions
-                    patients.append({
-                        "id": patient_dir,
-                        "sessions": session_statuses,
-                        # Consider patient complete if all sessions are complete
-                        "status": "Complete" if all(s["status"] == "Complete" for s in session_statuses) else "Processing"
-                    })
-                
-                # Get total patients from processing status or fallback to directory count
-                total_patients = (processing_status.get(run_id, {}).get('total_patients') 
-                                or len(all_patients))
-                
-                runs.append({
-                    "id": run_id,
-                    "date": datetime.fromtimestamp(os.path.getctime(run_dir)).strftime('%Y-%m-%d %H:%M:%S'),
-                    "patients": patients,
-                    "total_patients": total_patients,
-                    "total_sessions": sum(len(p["sessions"]) for p in patients)
-                })
-        
-        # Sort runs by date, most recent first
-        runs.sort(key=lambda x: x['date'], reverse=True)
-        return runs
-        
+        # Indexed DB read (ordered newest-first); replaces the os.walk scan.
+        return crud.list_runs_json(db)
     except Exception as e:
         logger.error(f"Error getting processed runs: {str(e)}")
         traceback.print_exc()
         return JSONResponse(
-            content={"error": str(e)},
+            content={"error": "Error getting processed runs."},
             status_code=500
         )
 

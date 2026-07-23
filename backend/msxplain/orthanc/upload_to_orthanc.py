@@ -5,6 +5,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+ORTHANC_URL = os.getenv("ORTHANC_URL", "http://orthanc:8042")
+
+
+def orthanc_auth():
+    """Basic-auth tuple for Orthanc from env, or None when auth is disabled.
+
+    Returns None (no-op) unless both ORTHANC_USERNAME and ORTHANC_PASSWORD are
+    set, so enabling Orthanc authentication needs only those env vars — no code
+    change. Orthanc itself is unpublished (internal network only) in prod.
+    """
+    user = os.getenv("ORTHANC_USERNAME")
+    password = os.getenv("ORTHANC_PASSWORD")
+    return (user, password) if user and password else None
+
 def find_dicom_files(base_folder: str) -> list:
     """Find all DICOM files recursively"""
     dicom_files = []
@@ -43,7 +57,7 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
             "Expand": True
         }
         
-        response = requests.post(search_url, json=query)
+        response = requests.post(search_url, json=query, auth=orthanc_auth())
         
         if response.status_code != 200:
             logger.warning(f"Failed to query Orthanc: {response.status_code}")
@@ -63,7 +77,7 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
             # Get all studies for this patient
             for study_uid_orthanc in patient.get('Studies', []):
                 study_url = f"{orthanc_url}/studies/{study_uid_orthanc}"
-                study_data = requests.get(study_url).json()
+                study_data = requests.get(study_url, auth=orthanc_auth()).json()
                 
                 # Check if this study matches our target study UID
                 study_instance_uid = study_data.get('MainDicomTags', {}).get('StudyInstanceUID', '')
@@ -76,7 +90,7 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                 # Get all series in this study
                 for series_uid in study_data.get('Series', []):
                     series_url = f"{orthanc_url}/series/{series_uid}"
-                    series_data = requests.get(series_url).json()
+                    series_data = requests.get(series_url, auth=orthanc_auth()).json()
                     
                     # Check if this is a segmentation series
                     main_tags = series_data.get('MainDicomTags', {})
@@ -93,7 +107,7 @@ def delete_existing_segmentations(patient_id: str, study_uid: str, orthanc_url: 
                     if is_segmentation:
                         # Delete this series
                         delete_url = f"{orthanc_url}/series/{series_uid}"
-                        delete_response = requests.delete(delete_url)
+                        delete_response = requests.delete(delete_url, auth=orthanc_auth())
                         
                         if delete_response.status_code == 200:
                             deleted_count += 1
@@ -122,7 +136,7 @@ def upload_to_orthanc(base_folder: str) -> None:
     
     # First check if Orthanc is running
     try:
-        response = requests.get(f"{orthanc_url}/system")
+        response = requests.get(f"{orthanc_url}/system", auth=orthanc_auth())
         if response.status_code != 200:
             raise Exception("Orthanc server is not responding correctly")
         logger.info("Successfully connected to Orthanc server")
@@ -189,7 +203,8 @@ def upload_to_orthanc(base_folder: str) -> None:
                 response = requests.post(
                     f"{orthanc_url}/instances",
                     data=f.read(),
-                    headers={'Content-Type': 'application/dicom'}
+                    headers={'Content-Type': 'application/dicom'},
+                    auth=orthanc_auth()
                 )
             
             if response.status_code == 200:
