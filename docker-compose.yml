@@ -2,7 +2,7 @@
 services:
   msxplain_backend:
     build: ./backend
-    image: msxplain_backend:5.3
+    image: msxplain_backend:dev
     container_name: msxplain_backend
     user: "${UID:-1000}:${GID:-1000}" # Use host user ID to avoid permission issues
     volumes:
@@ -12,8 +12,21 @@ services:
       - "5000:5000"
     environment:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
-    # depends_on:
-    #   - db
+      # Database + auth (self-hosted Supabase: Postgres + GoTrue).
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-postgres}@supabase-db:5432/postgres
+      - "SUPABASE_JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (32+ chars; generate with openssl rand -base64 48)}"
+      - SUPABASE_JWT_AUD=authenticated
+      - SUPABASE_AUTH_URL=http://supabase-auth:9999
+      - SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY:-}
+      # Orthanc is internal-only; the backend authenticates to it with these
+      # (leave unset to talk to an unauthenticated Orthanc in local dev).
+      - ORTHANC_USERNAME=${ORTHANC_USERNAME:-}
+      - ORTHANC_PASSWORD=${ORTHANC_PASSWORD:-}
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      supabase-auth:
+        condition: service_started
     restart: unless-stopped
     networks:
       - msxplain-network
@@ -26,42 +39,68 @@ services:
               capabilities: [ gpu ]
 
   msxplain_frontend:
-    build: ./frontend
-    image: msxplain_frontend:5.3
+    build:
+      context: ./frontend
+      args:
+        SUPABASE_URL: ${SUPABASE_URL:-}
+        SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+    image: msxplain_frontend:dev
     container_name: msxplain_frontend
     ports:
       - "3001:80"
     depends_on:
+      # ohif too: nginx resolves the `ohif` upstream (location /viewer/) at
+      # startup, so its container must exist first.
       - msxplain_backend
+      - ohif
     restart: unless-stopped
     networks:
       - msxplain-network
 
-  # ohif_viewer:
-  #   image: lluisb3/ohif-webapp:latest
-  #   container_name: msxplain_ohif_viewer
-  #   volumes:
-  #     # Nginx config
-  #     - ./config_ohif_orthnac/config/nginx.conf:/etc/nginx/nginx.conf
-  #     # Logs
-  #     - ./config_ohif_orthnac/logs/nginx:/var/logs/nginx
-  #     # Let's Encrypt
-  #     # - letsencrypt_certificates:/etc/letsencrypt
-  #     # - letsencrypt_challenges:/var/www/letsencrypt
-  #   ports:
-  #     - '443:443' # SSL
-  #     - '80:80' # Web
-  #   depends_on:
-  #     #   - keycloak
-  #     - orthanc
-  #   restart: on-failure
-  #   networks:
-  #     - msxplain-network
+  # OHIF DICOM viewer. Internal-only: it is reached same-origin through the
+  # frontend nginx at /viewer/, and it fetches images from the backend's
+  # read-only DICOMweb proxy (/api/dicom-web), never from Orthanc directly.
+  # app-config.js locks it to that single data source and hides download/export.
+  ohif:
+    # Built with PUBLIC_URL=/viewer/ so it can be served same-origin under
+    # /viewer/ (see the Dockerfile for why the stock image won't work here).
+    build:
+      context: ./config_ohif_orthnac/ohif
+      args:
+        OHIF_VERSION: v3.9.0
+    image: msxplain_ohif:dev
+    container_name: msxplain_ohif
+    volumes:
+      - ./config_ohif_orthnac/ohif/app-config.js:/usr/share/nginx/html/app-config.js:ro
+    restart: unless-stopped
+    networks:
+      - msxplain-network
 
   orthanc:
     image: jodogne/orthanc-plugins:1.12.10
     container_name: msxplain_orthancPACS
     hostname: orthanc
+    environment:
+      # When both are set, Orthanc requires HTTP auth (defense-in-depth on top
+      # of having no published ports). Unset -> auth stays disabled (dev).
+      - ORTHANC_USERNAME=${ORTHANC_USERNAME:-}
+      - ORTHANC_PASSWORD=${ORTHANC_PASSWORD:-}
+    # Enable Orthanc's own auth from env WITHOUT baking credentials into the
+    # committed config: layer a generated overlay file that loads after
+    # orthanc.json (Orthanc merges a config directory alphabetically, so
+    # "zz-" wins). No credentials are written unless both env vars are present.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /tmp/orthanc-config
+        cp /etc/orthanc/orthanc.json /tmp/orthanc-config/orthanc.json
+        if [ -n "$$ORTHANC_USERNAME" ] && [ -n "$$ORTHANC_PASSWORD" ]; then
+          printf '{ "AuthenticationEnabled": true, "RegisteredUsers": { "%s": "%s" } }' \
+            "$$ORTHANC_USERNAME" "$$ORTHANC_PASSWORD" > /tmp/orthanc-config/zz-auth.json
+        fi
+        exec Orthanc /tmp/orthanc-config/
     volumes:
       # Config
       - ./config_ohif_orthnac/config/orthanc.json:/etc/orthanc/orthanc.json:ro
@@ -74,6 +113,70 @@ services:
     networks:
       - msxplain-network
 
+  # ── Self-hosted Supabase (auth only): Postgres + GoTrue ──────────────────
+  # Trimmed to the two services we actually use in team mode. The backend
+  # talks to Postgres directly (SQLAlchemy); the frontend nginx proxies
+  # /auth/v1 to GoTrue. No Kong/PostgREST/Studio/Realtime/Storage.
+  supabase-db:
+    # Plain Postgres so GoTrue owns a self-consistent `auth` schema. (The
+    # supabase/postgres image pre-bakes its own auth schema, which conflicts
+    # with the standalone GoTrue version's migrations.)
+    image: postgres:15
+    container_name: msxplain_supabase_db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+      # Creates the `auth` schema on first init (see file for why).
+      - ./supabase/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - msxplain-network
+
+  supabase-auth:
+    image: supabase/gotrue:v2.151.0
+    container_name: msxplain_supabase_auth
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: ${PUBLIC_URL:-http://localhost:3001}
+      GOTRUE_DB_DRIVER: postgres
+      # search_path=auth so GoTrue's unqualified queries resolve to its schema
+      # (we connect as the postgres superuser, whose default path lacks auth).
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@supabase-db:5432/postgres?search_path=auth
+      GOTRUE_SITE_URL: ${PUBLIC_URL:-http://localhost:3001}
+      GOTRUE_JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be set (32+ chars; generate with openssl rand -base64 48)}"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      # Session expiry (otherwise refresh tokens renew forever and a browser
+      # stays logged in indefinitely). GoTrue refuses to refresh past these
+      # limits, so supabase-js drops the session and ProtectedRoute -> /login.
+      #   INACTIVITY_TIMEOUT: log out after this much idle time.
+      #   TIMEBOX: hard cap on total session length regardless of activity.
+      # Override per-deploy via SESSIONS_* in .env.
+      GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: ${SESSIONS_INACTIVITY_TIMEOUT:-3h}
+      GOTRUE_SESSIONS_TIMEBOX: ${SESSIONS_TIMEBOX:-12h}
+      # Team / invite-only: public signup disabled; users auto-confirmed so no
+      # SMTP server is required (admins provision via the Admin API).
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+    restart: unless-stopped
+    networks:
+      - msxplain-network
+
 networks:
   msxplain-network:
     driver: bridge
+
+volumes:
+  supabase-db-data:

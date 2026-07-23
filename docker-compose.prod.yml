@@ -1,0 +1,88 @@
+# Production overlay for MSXplain — serve behind the shared Traefik.
+#
+# Usage (GPU host):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# CPU host (cpu.yml MUST be last so its `deploy: !reset` wins):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.cpu.yml up -d
+#
+# Only the frontend is exposed (single host). Backend, Orthanc and both
+# Supabase containers stay internal — no published host ports. This file must
+# NOT set msxplain_backend.deploy, or it would override the CPU reset.
+services:
+  msxplain_frontend:
+    env_file: [.env]
+    # Reachable only through Traefik on the external `prod` network.
+    ports: !reset []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=prod"
+      - "traefik.http.routers.msxplain-frontend-web.rule=Host(`${TRAEFIK_URL}`)"
+      - "traefik.http.routers.msxplain-frontend-web.middlewares=msxplain-sec-headers"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.msxplain-sec-headers.headers.referrerPolicy=no-referrer"
+    networks:
+      - msxplain-network
+      - prod
+
+  msxplain_backend:
+    env_file: [.env]
+    # Internal only; reached at msxplain_backend:5000 by the frontend nginx.
+    ports: !reset []
+
+  # NOTE: the OHIF viewer needs no prod override — the base file publishes no
+  # ports for it, so it is already internal-only and reached via /viewer/.
+
+  orthanc:
+    # Take the PACS off the internet: no published DICOM/HTTP ports. Users can
+    # never reach Orthanc; the only path to images is the backend's read-only
+    # /api/dicom-web proxy. Admin access (you) is via SSH tunnel into the Docker
+    # network, e.g.:
+    #   ssh -L 8042:orthanc:8042 <host>   # then browse http://localhost:8042/
+    # or:  docker exec -it msxplain_orthancPACS sh
+    ports: !reset []
+
+  # ── Backups (prod only), mirroring the quantimage pattern ────────────────
+  backup-database:
+    image: prodrigestivill/postgres-backup-local:15
+    container_name: msxplain_backup_db
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: supabase-db
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "30"
+      BACKUP_KEEP_WEEKS: "0"
+      BACKUP_KEEP_MONTHS: "6"
+    volumes:
+      - ${DB_BACKUP_DIRECTORY:-./backups/db}:/backups
+    restart: unless-stopped
+    networks:
+      - msxplain-network
+
+  backup-data:
+    image: offen/docker-volume-backup:v2.35.0
+    container_name: msxplain_backup_data
+    environment:
+      BACKUP_CRON_EXPRESSION: "0 3 * * *"
+      BACKUP_FILENAME: msxplain-data-%Y%m%d-%H%M%S.tar.gz
+      BACKUP_RETENTION_DAYS: "30"
+    volumes:
+      - ./backend/files:/backup/files:ro
+      - ./config_ohif_orthnac/volumes/orthanc-db:/backup/orthanc-db:ro
+      - ${DATA_BACKUP_DIRECTORY:-./backups/data}:/archive
+    restart: unless-stopped
+    networks:
+      - msxplain-network
+
+networks:
+  prod:
+    external: true
+    name: ${TRAEFIK_NETWORK}
