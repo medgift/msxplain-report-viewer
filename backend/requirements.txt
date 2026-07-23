@@ -89,3 +89,8 @@ palettable==3.3.3
 psutil==5.9.8
 scikit-learn==1.3.2
 seaborn==0.13.0
+# Auth + database (public deployment)
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
+alembic==1.14.0
+PyJWT==2.10.1
