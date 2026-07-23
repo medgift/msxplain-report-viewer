@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../api';
 import './ProcessedRuns.css';
 
 const ProcessedRuns = () => {
@@ -11,7 +11,7 @@ const ProcessedRuns = () => {
   useEffect(() => {
     const fetchRuns = async () => {
       try {
-        const response = await axios.get('/api/processed-runs');
+        const response = await api.get('/api/processed-runs');
         setRuns(response.data);
       } catch (error) {
         console.error('Error fetching runs:', error);

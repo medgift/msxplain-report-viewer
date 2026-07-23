@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProcessing } from '../context/ProcessingContext';
 import { useNavigate } from 'react-router-dom';
+import { authFetch } from '../api';
 import './FileUpload.css';
 
 const FileUpload = () => {
@@ -28,11 +29,11 @@ const [runId, setRunId] = useState(null);
       url += `?run_id=${runId}`;
     }
 
-    const response = await fetch(url, {
+    const response = await authFetch(url, {
       method: 'POST',
       body: formData
     });
-    
+
     if (!response.ok) {
       throw new Error(`Upload failed: ${response.statusText}`);
     }
@@ -97,12 +98,12 @@ const [runId, setRunId] = useState(null);
         setActiveRun(runId);
         localStorage.setItem('activeRun', runId);
         
-        const response = await fetch(`/api/process-scans/${runId}`, {
+        const response = await authFetch(`/api/process-scans/${runId}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
-        });      
+        });
 
         if (!response.ok) {
             throw new Error(`Processing failed: ${response.statusText}`);

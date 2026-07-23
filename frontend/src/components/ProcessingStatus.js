@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useProcessing } from '../context/ProcessingContext';
 import { Link } from 'react-router-dom';
+import { authFetch } from '../api';
 import './ProcessingStatus.css';
 
 const ProcessingStatus = () => {
@@ -24,7 +25,7 @@ const ProcessingStatus = () => {
       if (!activeRun) return;
 
       try {
-        const response = await fetch(`/api/process-status/${activeRun}`);
+        const response = await authFetch(`/api/process-status/${activeRun}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }

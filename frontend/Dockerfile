@@ -12,6 +12,12 @@ RUN yarn install --frozen-lockfile
 # Copy source code
 COPY . .
 
+# Public Supabase config, injected into the bundle at build time (safe to ship).
+ARG SUPABASE_URL
+ARG SUPABASE_ANON_KEY
+ENV SUPABASE_URL=$SUPABASE_URL
+ENV SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+
 # Build the application for production
 RUN yarn build
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Niivue, SLICE_TYPE } from '@niivue/niivue';
+import { getAccessToken } from '../api';
 import './Brain3DViewer.css';
 
 /**
@@ -71,14 +72,23 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
   const [brainOpacity, setBrainOpacity] = useState(30); // 0–100 %
   const [lesionOpacity, setLesionOpacity] = useState(90); // 0–100 %
   const [volumesLoaded, setVolumesLoaded] = useState(false);
+  // NiiVue fetches the NIfTI URLs itself, so the bearer token must be passed
+  // via each volume's `headers`. Resolve it once before initialising NiiVue.
+  const [authHeaders, setAuthHeaders] = useState(null);
 
   // Build API URLs for the two NIfTI files
   const brainUrl = `/api/nifti/${run_id}/${patient_name}/${session}/flair_brain.nii.gz`;
   const lesionUrl = `/api/nifti-lesion-types/${run_id}/${patient_name}/${session}`;
 
+  useEffect(() => {
+    getAccessToken().then((token) => {
+      setAuthHeaders(token ? { Authorization: `Bearer ${token}` } : {});
+    });
+  }, []);
+
   // ── Initialise NiiVue once ────────────────────────────────────────────────
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || authHeaders === null) return;
 
     const nv = new Niivue({
       backColor: [0.08, 0.08, 0.12, 1],   // dark background
@@ -106,6 +116,7 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
         opacity: brainOpacity / 100,
         cal_min: 0,
         cal_max: 0,      // 0 → NiiVue auto-scales
+        headers: authHeaders,
       },
     ];
 
@@ -117,6 +128,7 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
         opacity: lesionOpacity / 100,
         cal_min: 0,       // value 0 → LUT[0] (transparent)
         cal_max: 4,       // value 4 → LUT[255] (Deep White Matter)
+        headers: authHeaders,
       });
     }
 
@@ -184,7 +196,7 @@ const Brain3DViewer = ({ run_id, patient_name, session, lesionCount = 0 }) => {
       nvRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run_id, patient_name, session]);
+  }, [run_id, patient_name, session, authHeaders]);
 
   // ── Sync view mode ────────────────────────────────────────────────────────
   useEffect(() => {

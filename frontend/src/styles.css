@@ -47,6 +47,14 @@ body {
   min-height: 50px;
 }
 
+/* The fixed sign-out button (LogoutButton, rendered by ProtectedRoute) owns
+   the top-right corner on every page: keep each page's own nav buttons to
+   its left. Scoped under .navigation-bar so it outranks the per-page
+   .nav-right rules regardless of CSS load order. */
+.navigation-bar .nav-right {
+  margin-right: 7.5rem;
+}
+
 /* Loading spinner */
 .loading-container {
   display: flex;

@@ -1,9 +1,10 @@
 const path = require('path');
+const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === 'production';
-  
+
   return {
     entry: './src/index.js',
     output: {
@@ -34,6 +35,14 @@ module.exports = (env, argv) => {
       new HtmlWebpackPlugin({
         template: './public/index.html',
         favicon: './public/brain.ico',
+      }),
+      // Inject the (public) Supabase config at build time. Unset values become
+      // `undefined` and the client falls back to window.location.origin.
+      new webpack.DefinePlugin({
+        'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL),
+        'process.env.SUPABASE_ANON_KEY': JSON.stringify(
+          process.env.SUPABASE_ANON_KEY
+        ),
       }),
     ],
     // Only include devServer config in development mode
