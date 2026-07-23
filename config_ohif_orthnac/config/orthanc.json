@@ -30,10 +30,9 @@
   "RemoteAccessAllowed": true,
   "SslEnabled": false,
   "SslCertificate": "certificate.pem",
+  "//AuthenticationNote": "In prod Orthanc is internal-only (ports unpublished in docker-compose.prod.yml). To additionally require auth, set AuthenticationEnabled=true, add RegisteredUsers, and set ORTHANC_USERNAME/ORTHANC_PASSWORD in .env so the backend authenticates.",
   "AuthenticationEnabled": false,
-  "RegisteredUsers": {
-    "test": "test"
-  },
+  "RegisteredUsers": {},
   "DicomModalities": {},
   "DicomModalitiesInDatabase": false,
   "DicomAlwaysAllowEcho": true,

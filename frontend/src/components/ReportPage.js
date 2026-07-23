@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Brain3DViewer from './Brain3DViewer';
 import CertaintyGaussian from './CertaintyGaussian';
+import api, { authFetch } from '../api';
 import './ReportPage.css';
 
 // Lesion-type metadata: canonical order, the report.csv count key, and a
@@ -45,7 +46,7 @@ const ReportPage = () => {
     if (run_id && patient_name && session) {
       setLoading(true);
       setError(null);
-      fetch(`/api/report/${run_id}/${patient_name}/${session}`)
+      authFetch(`/api/report/${run_id}/${patient_name}/${session}`)
         .then((response) => {
           if (!response.ok) {
             throw new Error('Report not found');
@@ -71,16 +72,25 @@ const ReportPage = () => {
     window.open('https://www.thelancet.com/article/S1474-4422(25)00270-4/fulltext#', '_blank', 'noopener,noreferrer');
   };
 
-  const openOHIFViewer = () => {
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    const OHIF_URL = `${protocol}//${hostname}:8042/ohif/`;
-    if (reportData && reportData.study_instance_uid) {
-      window.open(`${OHIF_URL}viewer?StudyInstanceUIDs=${reportData.study_instance_uid}`, '_blank', 'noopener,noreferrer');
-    } else {
-      window.open(OHIF_URL, '_blank', 'noopener,noreferrer');
-      console.warn('No StudyInstanceUID available, opening OHIF home page');
+  // Open the OHIF viewer for this study. We first ask the backend to set the
+  // short-lived HttpOnly session cookie the viewer uses to authenticate its
+  // DICOMweb requests (POST /api/viewer-session), then open OHIF same-origin.
+  // Orthanc is never reached directly; OHIF reads only the read-only proxy.
+  const openViewer = async () => {
+    const uid = reportData && reportData.study_instance_uid;
+    if (!uid) return;
+    try {
+      await api.post('/api/viewer-session');
+    } catch (err) {
+      // Non-fatal: if the cookie isn't set the viewer will simply 401 and the
+      // user can retry. Surface it in the console for debugging.
+      console.error('Could not open viewer session:', err);
     }
+    window.open(
+      `/viewer/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}`,
+      '_blank',
+      'noopener,noreferrer'
+    );
   };
 
   // Derived values (only meaningful once reportData is present)
@@ -120,7 +130,9 @@ const ReportPage = () => {
           <h2>MSXplain Report</h2>
         </div>
         <div className="nav-right">
-          <button onClick={openOHIFViewer} className="action-button">View Images</button>
+          {reportData && reportData.study_instance_uid && (
+            <button onClick={openViewer} className="action-button">View Images</button>
+          )}
           <button onClick={openMcDonaldCriteria} className="action-button">McDonald Criteria</button>
         </div>
       </nav>
