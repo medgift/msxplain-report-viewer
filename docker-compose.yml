@@ -1,4 +1,11 @@
 # Docker compose file for MSXplain application
+#
+# SECURITY — published ports are bound to 127.0.0.1 (loopback) by default, so a
+# bare `docker compose up` never exposes the backend or the Orthanc PACS to the
+# network/internet, only to the host. The prod overlay (docker-compose.prod.yml)
+# removes these mappings entirely (`ports: !reset []`) and routes through
+# Traefik over the docker network. To reach a service from another machine in
+# dev, add your own override — do not change these bindings to 0.0.0.0 here.
 services:
   msxplain_backend:
     build: ./backend
@@ -9,7 +16,8 @@ services:
       # Persist data
       - ./backend/files:/app/files
     ports:
-      - "5000:5000"
+      # Loopback-only (see the security note at the top of this file).
+      - "127.0.0.1:5000:5000"
     environment:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       # Database + auth (self-hosted Supabase: Postgres + GoTrue).
@@ -47,7 +55,9 @@ services:
     image: msxplain_frontend:dev
     container_name: msxplain_frontend
     ports:
-      - "3001:80"
+      # Loopback-only in dev; browse http://localhost:3001. Prod serves this
+      # through Traefik (ports reset in docker-compose.prod.yml).
+      - "127.0.0.1:3001:80"
     depends_on:
       # ohif too: nginx resolves the `ohif` upstream (location /viewer/) at
       # startup, so its container must exist first.
@@ -97,8 +107,13 @@ services:
         mkdir -p /tmp/orthanc-config
         cp /etc/orthanc/orthanc.json /tmp/orthanc-config/orthanc.json
         if [ -n "$$ORTHANC_USERNAME" ] && [ -n "$$ORTHANC_PASSWORD" ]; then
+          # Escape backslash then double-quote so a credential containing either
+          # can't break the generated JSON. A malformed zz-auth.json would make
+          # Orthanc ignore the overlay and silently start with auth DISABLED.
+          esc_u=$$(printf '%s' "$$ORTHANC_USERNAME" | sed 's/\\/\\\\/g; s/"/\\"/g')
+          esc_p=$$(printf '%s' "$$ORTHANC_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')
           printf '{ "AuthenticationEnabled": true, "RegisteredUsers": { "%s": "%s" } }' \
-            "$$ORTHANC_USERNAME" "$$ORTHANC_PASSWORD" > /tmp/orthanc-config/zz-auth.json
+            "$$esc_u" "$$esc_p" > /tmp/orthanc-config/zz-auth.json
         fi
         exec Orthanc /tmp/orthanc-config/
     volumes:
@@ -107,14 +122,17 @@ services:
       # Persist data
       - ./config_ohif_orthnac/volumes/orthanc-db/:/var/lib/orthanc/db/
     ports:
-      - '4242:4242'
-      - '8042:8042'
+      # Loopback-only: the PACS is never exposed to the network by default
+      # (prod removes these entirely). Reach it in dev via localhost, e.g.
+      # http://localhost:8042/, or over an SSH tunnel on a remote host.
+      - '127.0.0.1:4242:4242'
+      - '127.0.0.1:8042:8042'
     restart: unless-stopped
     networks:
       - msxplain-network
 
   # ── Self-hosted Supabase (auth only): Postgres + GoTrue ──────────────────
-  # Trimmed to the two services we actually use in team mode. The backend
+  # Trimmed to the two services we actually use for authentication. The backend
   # talks to Postgres directly (SQLAlchemy); the frontend nginx proxies
   # /auth/v1 to GoTrue. No Kong/PostgREST/Studio/Realtime/Storage.
   supabase-db:
