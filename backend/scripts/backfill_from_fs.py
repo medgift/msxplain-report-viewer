@@ -2,8 +2,10 @@
 
 Idempotent: safe to re-run. Walks files/processed/<run>/<patient>/<session>/
 exactly like the old get_processed_runs did, and upserts run/patient/session
-rows plus report_summary (via the shared compute_report_summary). Legacy runs
-get owner_id = NULL, which is fine in team mode.
+rows plus report_summary (via the shared compute_report_summary). Backfilled
+runs get owner_id = NULL. NOTE: under strict per-user isolation a NULL owner is
+hidden from every user, so backfilled runs will not appear in the UI until an
+owner is assigned (e.g. an admin UPDATE of msx.runs.owner_id).
 
 Usage (inside the backend container or with DATABASE_URL set):
     python scripts/backfill_from_fs.py [--processed-dir files/processed]

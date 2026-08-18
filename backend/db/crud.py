@@ -31,6 +31,48 @@ def get_run(session: Session, run_id: str) -> Optional[Run]:
     return session.scalar(select(Run).where(Run.run_id == run_id))
 
 
+# ── authorization (strict per-user isolation) ────────────────────────────
+# A run is accessible only by the user whose id equals ``runs.owner_id``.
+# Runs with a NULL owner (legacy / backfilled) are owned by nobody and are
+# therefore hidden from everyone — every check below is fail-closed.
+def run_owned_by(session: Session, run_id: str, owner_id: Optional[str]) -> bool:
+    """True iff *run_id* exists and is owned by *owner_id* (non-NULL)."""
+    if not owner_id:
+        return False
+    run = get_run(session, run_id)
+    return (
+        run is not None
+        and run.owner_id is not None
+        and str(run.owner_id) == str(owner_id)
+    )
+
+
+def user_owns_studies(
+    session: Session, study_uids, owner_id: Optional[str]
+) -> bool:
+    """True iff every StudyInstanceUID maps to a session under a run the user owns.
+
+    Used to authorize the DICOMweb proxy: a study is reachable only when it
+    belongs to one of the requesting user's runs. Requires *all* requested UIDs
+    to be owned (any unknown or foreign UID fails the whole request).
+    """
+    study_uids = {u for u in (study_uids or ()) if u}
+    if not study_uids or not owner_id:
+        return False
+    owned = set(
+        session.scalars(
+            select(SessionRow.study_instance_uid)
+            .join(Patient, SessionRow.patient_pk == Patient.id)
+            .join(Run, Patient.run_pk == Run.id)
+            .where(
+                Run.owner_id == owner_id,
+                SessionRow.study_instance_uid.in_(list(study_uids)),
+            )
+        ).all()
+    )
+    return study_uids.issubset(owned)
+
+
 def _get_patient(session: Session, run: Run, patient_name: str) -> Optional[Patient]:
     return session.scalar(
         select(Patient).where(
@@ -63,8 +105,11 @@ def register_upload(
         run = Run(run_id=run_id, owner_id=owner_id, status=models.RUN_UPLOADING)
         session.add(run)
         session.flush()
-    elif owner_id and run.owner_id is None:
-        run.owner_id = owner_id
+    # Ownership is set once, at creation. We deliberately do NOT adopt a
+    # pre-existing run's ownership here: a NULL-owner (legacy/backfilled) run is
+    # "owned by nobody" and must stay that way until an admin assigns it.
+    # Auto-claiming it from the upload path would let any authenticated user take
+    # over a legacy run and read its PHI (see the owner check in upload_dicoms).
 
     for name in patient_names:
         if _get_patient(session, run, name) is None:
@@ -260,8 +305,16 @@ def get_run_status_json(session: Session, run_id: str) -> Optional[dict]:
     }
 
 
-def list_runs_json(session: Session) -> list:
-    runs = session.scalars(select(Run).order_by(Run.created_at.desc())).all()
+def list_runs_json(session: Session, owner_id: Optional[str]) -> list:
+    # Strict isolation: only the caller's own runs. A NULL/absent owner_id
+    # matches nothing, so unauthenticated or legacy-owner runs are never listed.
+    if not owner_id:
+        return []
+    runs = session.scalars(
+        select(Run)
+        .where(Run.owner_id == owner_id)
+        .order_by(Run.created_at.desc())
+    ).all()
     result = []
     for run in runs:
         patients = []

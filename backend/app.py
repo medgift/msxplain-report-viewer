@@ -100,10 +100,22 @@ PROCESSED_FOLDER = "files/processed"
 MAX_UPLOAD_FILES = 20000            # per request (a DICOM series is many files)
 MAX_UPLOAD_BYTES = 2 * 1024 ** 3    # 2 GiB per request
 
-# Get CORS origins from environment variable. In production this is the single
-# public origin; "*" is only for local development.
-cors_origins = os.getenv("CORS_ORIGINS", "*")
-allowed_origins = cors_origins.split(",") if cors_origins != "*" else ["*"]
+# CORS. In production the frontend and backend are same-origin (nginx proxies
+# /api), so CORS does not apply there; it matters only for direct cross-origin
+# calls (e.g. a split-origin dev setup). Credentialed CORS is enabled ONLY when
+# an explicit origin allow-list is configured. We never combine allow_origins
+# ["*"] with allow_credentials=True: Starlette would then reflect the caller's
+# Origin and return Access-Control-Allow-Credentials: true for ANY site,
+# defeating the same-origin policy. Set CORS_ORIGINS to the public origin(s) in
+# prod (comma-separated); leave it unset/"*" for same-origin or bearer-only use.
+cors_origins = os.getenv("CORS_ORIGINS", "").strip()
+if cors_origins and cors_origins != "*":
+    allowed_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    allow_credentials = True
+else:
+    # No explicit allow-list -> no credentialed cross-origin access.
+    allowed_origins = ["*"]
+    allow_credentials = False
 
 # NOTE ON MIDDLEWARE ORDER: Starlette runs the LAST-added middleware outermost.
 # AuthMiddleware is added first and CORS second, so CORS wraps auth and even a
@@ -112,7 +124,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
@@ -143,6 +155,21 @@ def _safe_path(root: Path, *segments: str) -> Path:
     if not candidate.is_relative_to(root):
         raise HTTPException(status_code=403, detail="Invalid path parameters.")
     return candidate
+
+
+def require_run_owner(run_id: str, request: Request, db=Depends(get_db)) -> str:
+    """FastAPI dependency enforcing strict per-user isolation on a path ``run_id``.
+
+    Returns the run_id when the authenticated caller owns the run; otherwise
+    raises 404 — never 403, so the response never reveals whether another user's
+    run exists. Declaring ``_: str = Depends(require_run_owner)`` on a run-scoped
+    route makes the ownership check un-forgettable: it runs before the handler
+    body, so a new route cannot silently ship without isolation. NULL-owner
+    (legacy/backfilled) runs are owned by nobody and therefore fail this check.
+    """
+    if not crud.run_owned_by(db, run_id, current_user_id(request)):
+        raise HTTPException(status_code=404, detail="Not found.")
+    return run_id
 
 
 @app.get("/api/health")
@@ -224,10 +251,68 @@ def open_viewer_session(request: Request):
     return resp
 
 
+# DICOMweb resource roots OHIF issues QIDO/WADO-RS requests against. The proxy
+# refuses anything else so a caller cannot reach Orthanc's wider REST API.
+_DICOMWEB_ROOTS = frozenset({"studies", "series", "instances"})
+
+
+def _validate_dicomweb_path(path: str) -> None:
+    """Reject any proxy path that could escape the ``/dicom-web/`` namespace.
+
+    ``requests``/urllib3 collapse ``../`` when preparing a URL, so an unchecked
+    ``path`` such as ``../../studies/{id}/archive`` would be forwarded to
+    Orthanc's raw REST API (full-study ZIP download, PHI enumeration),
+    defeating the read-only DICOMweb contract. We block traversal (in both
+    literal and percent-decoded forms — the ASGI path is already decoded) and
+    pin the request to a known DICOMweb resource root.
+    """
+    if not path or path.startswith("/") or "\\" in path:
+        raise HTTPException(status_code=400, detail="Invalid DICOMweb path.")
+    segments = path.split("/")
+    if any(seg in ("", ".", "..") for seg in segments):
+        raise HTTPException(status_code=400, detail="Invalid DICOMweb path.")
+    if segments[0] not in _DICOMWEB_ROOTS:
+        raise HTTPException(status_code=400, detail="Invalid DICOMweb path.")
+
+
+def _dicomweb_study_uids(path: str, query_params) -> set:
+    """StudyInstanceUIDs a validated DICOMweb request targets.
+
+    WADO-RS and relative QIDO carry the UID as the second path segment
+    (``studies/{uid}/...``); a bare ``studies`` QIDO search carries it in a
+    ``StudyInstanceUID(s)`` query parameter. Returns an empty set for requests
+    not scoped to a specific study (cross-study enumeration or bare
+    ``series``/``instances`` roots), which the caller treats as forbidden.
+    """
+    segments = path.split("/")
+    if segments[0] == "studies" and len(segments) >= 2 and segments[1]:
+        return {segments[1]}
+    if segments[0] == "studies" and len(segments) == 1:
+        uids = set()
+        for key, val in query_params.multi_items():
+            if key.lower().startswith("studyinstanceuid"):
+                uids.update(u for u in val.split(",") if u)
+        return uids
+    return set()
+
+
 @app.get("/api/dicom-web/{path:path}")
-def dicomweb_proxy(path: str, request: Request):
+def dicomweb_proxy(path: str, request: Request, db=Depends(get_db)):
     """Authenticated, read-only DICOMweb passthrough to Orthanc for OHIF."""
     from msxplain.orthanc.upload_to_orthanc import ORTHANC_URL, orthanc_auth
+
+    _validate_dicomweb_path(path)
+
+    # Strict isolation: only proxy studies that belong to one of the caller's
+    # own runs. Requests not scoped to a specific study are refused so a user
+    # cannot enumerate or stream another tenant's imaging.
+    study_uids = _dicomweb_study_uids(path, request.query_params)
+    if not crud.user_owns_studies(db, study_uids, current_user_id(request)):
+        audit_logger.warning(
+            "dicomweb DENIED user=%s ip=%s path=%s",
+            current_user_id(request), _client_ip(request), path,
+        )
+        raise HTTPException(status_code=404, detail="Study not found.")
 
     upstream_url = f"{ORTHANC_URL}/dicom-web/{path}"
     # Forward only content negotiation; the user's Authorization/cookie is NOT
@@ -380,7 +465,10 @@ _LESION_TYPE_CODES: Dict[str, int] = {
 
 
 @app.get("/api/nifti-lesion-types/{run_id}/{patient_name}/{session}")
-async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
+async def get_lesion_types_nifti(
+    run_id: str, patient_name: str, session: str,
+    _owner: str = Depends(require_run_owner),
+):
     """Generate and serve a type-coded lesion NIfTI for 3D visualisation.
 
     Reads the per-instance ``lesion_map_flair_space_ants.nii.gz`` and the
@@ -466,7 +554,10 @@ async def get_lesion_types_nifti(run_id: str, patient_name: str, session: str):
 
 
 @app.get("/api/nifti/{run_id}/{patient_name}/{session}/{filename}")
-async def get_nifti_file(run_id: str, patient_name: str, session: str, filename: str):
+async def get_nifti_file(
+    run_id: str, patient_name: str, session: str, filename: str,
+    _owner: str = Depends(require_run_owner),
+):
     """Serve a NIfTI file for browser-side 3D visualization (e.g. NiiVue).
 
     Only a fixed allow-list of filenames is accessible to prevent arbitrary
@@ -501,9 +592,46 @@ async def get_nifti_file(run_id: str, patient_name: str, session: str, filename:
     )
 
 
+def _first_dicom_dataset(dicom_base_folder: str):
+    """Read the first FLAIR DICOM under an uploaded run's patient folder.
+
+    Returns a pydicom dataset, or None if none is found/readable. This is the
+    authoritative source for the run's demographics AND its StudyInstanceUID —
+    taken from the file the user actually uploaded, never from a shared Orthanc
+    lookup that could resolve to another tenant's study.
+    """
+    try:
+        date_folder = next(
+            (f for f in os.listdir(dicom_base_folder)
+             if os.path.isdir(os.path.join(dicom_base_folder, f))),
+            None,
+        )
+        if not date_folder:
+            return None
+        date_path = os.path.join(dicom_base_folder, date_folder)
+        flair_folder = next(
+            (f for f in os.listdir(date_path) if "flair" in f.lower()), None
+        )
+        if not flair_folder:
+            return None
+        dicom_folder = os.path.join(date_path, flair_folder)
+        dicom_files = os.listdir(dicom_folder)
+        if not dicom_files:
+            return None
+        return pydicom.dcmread(os.path.join(dicom_folder, dicom_files[0]))
+    except Exception as exc:
+        logger.error(f"Error reading DICOM metadata: {exc}")
+        return None
+
+
 # Route to get data from the Excel file
 @app.get("/api/report/{run_id}/{patient_name}/{session}")
-async def get_report(run_id: str, patient_name: str, session: str, db=Depends(get_db)):
+async def get_report(
+    run_id: str, patient_name: str, session: str,
+    db=Depends(get_db), _owner: str = Depends(require_run_owner),
+):
+    # Ownership (strict per-user isolation) is enforced by require_run_owner,
+    # which 404s before this body runs if the caller does not own run_id.
     try:
         # Directory name (path param), captured before the DICOM read may
         # overwrite `patient_name` with the DICOM PatientName below.
@@ -549,79 +677,37 @@ async def get_report(run_id: str, patient_name: str, session: str, db=Depends(ge
         )
         _study_uid_cached = bool(_meta and _meta.get("study_instance_uid"))
 
-        # Load DICOM file and extract metadata from the uploaded folder
-        dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, patient_name)
+        # Read the uploaded DICOM once when we need demographics or the study
+        # UID; both are sourced from the file the user actually uploaded.
+        dicom_base_folder = os.path.join(UPLOAD_FOLDER, run_id, dir_patient)
+        _dataset = None
+        if not _demographics_cached or not _study_uid_cached:
+            _dataset = _first_dicom_dataset(dicom_base_folder)
 
         if _demographics_cached:
             patient_name = _meta.get("display_name") or dir_patient
             patient_id = _meta.get("patient_id") or "Unknown"
             patient_birth_date = _meta.get("birth_date") or "Unknown"
             patient_sex = _meta.get("sex") or "Unknown"
+        elif _dataset is not None:
+            patient_name = str(getattr(_dataset, "PatientName", "") or "Unknown")
+            patient_id = str(getattr(_dataset, "PatientID", "") or "Unknown")
+            _bd = getattr(_dataset, "PatientBirthDate", "")
+            patient_birth_date = format_birth_date(str(_bd)) if _bd else "Unknown"
+            patient_sex = str(getattr(_dataset, "PatientSex", "") or "Unknown")
         else:
-            try:
-                dicom_date_folder = next((f for f in os.listdir(dicom_base_folder)
-                                        if os.path.isdir(os.path.join(dicom_base_folder, f))), None)
-                if dicom_date_folder:
-                    dicom_flair_folder = next((f for f in os.listdir(os.path.join(dicom_base_folder, dicom_date_folder))
-                                             if 'flair' in f.lower()), None)
-                    if dicom_flair_folder:
-                        dicom_folder = os.path.join(dicom_base_folder, dicom_date_folder, dicom_flair_folder)
-                        dicom_files = [f for f in os.listdir(dicom_folder)]
-                        if dicom_files:
-                            dicom_file_path = os.path.join(dicom_folder, dicom_files[0])
-                            dicom_data = pydicom.dcmread(dicom_file_path)
-                            patient_name = str(dicom_data.PatientName)
-                            patient_id = str(dicom_data.PatientID)
-                            patient_birth_date = format_birth_date(str(dicom_data.PatientBirthDate))
-                            patient_sex = str(dicom_data.PatientSex)
-                        else:
-                            patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
-                    else:
-                        patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
-                else:
-                    patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
-            except Exception as e:
-                logger.error(f"Error reading DICOM metadata: {str(e)}")
-                patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
+            patient_name = patient_id = patient_birth_date = patient_sex = "Unknown"
 
-        # Get StudyInstanceUID from Orthanc for this patient (unless cached).
+        # StudyInstanceUID is read directly from the uploaded DICOM — it is the
+        # authoritative id for THIS run's study. We deliberately do NOT resolve
+        # it via an Orthanc tools/find on PatientID: PatientID is attacker-
+        # controlled and not unique across tenants, so a shared-PACS lookup could
+        # bind another tenant's study to this run and defeat per-user isolation
+        # on the DICOMweb proxy (user_owns_studies keys on this cached UID).
         study_instance_uid = _meta.get("study_instance_uid") if _study_uid_cached else None
-        if not _study_uid_cached:
-            try:
-                # Query Orthanc for studies by patient ID using the tools/find API
-                orthanc_url = "http://orthanc:8042"
-
-                # Use Orthanc's tools/find API to search for studies by PatientID
-                search_payload = {
-                    "Level": "Study",
-                    "Query": {
-                        "PatientID": patient_id
-                    },
-                    "Expand": True
-                }
-
-                from msxplain.orthanc.upload_to_orthanc import orthanc_auth
-                search_response = requests.post(
-                    f"{orthanc_url}/tools/find",
-                    json=search_payload,
-                    auth=orthanc_auth()
-                )
-
-                if search_response.status_code == 200:
-                    studies = search_response.json()
-                    logger.info(f"Found {len(studies)} studies for patient {patient_id}")
-                    if studies:
-                        # Get the StudyInstanceUID from the first study
-                        first_study = studies[0]
-                        study_instance_uid = first_study.get('MainDicomTags', {}).get('StudyInstanceUID')
-                        logger.info(f"StudyInstanceUID: {study_instance_uid}")
-                    else:
-                        logger.warning(f"No studies found for patient {patient_id}")
-                else:
-                    logger.error(f"Failed to query Orthanc: {search_response.status_code}")
-            except Exception as e:
-                logger.error(f"Error retrieving StudyInstanceUID from Orthanc: {str(e)}")
-                traceback.print_exc()
+        if not _study_uid_cached and _dataset is not None:
+            _uid = getattr(_dataset, "StudyInstanceUID", None)
+            study_instance_uid = str(_uid) if _uid else None
 
         # Cache freshly-computed demographics + study UID for future requests.
         if not (_demographics_cached and _study_uid_cached):
@@ -761,6 +847,8 @@ async def get_report(run_id: str, patient_name: str, session: str, db=Depends(ge
             "scanner": scanner_info,
         }
         return report_data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}")
         traceback.print_exc()
@@ -781,6 +869,18 @@ async def upload_dicoms(
         # run_ids that try to escape the uploads root.
         if not run_id:
             run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Strict isolation: only a brand-new run_id, or the caller's OWN run, may
+        # be written. A pre-existing run owned by someone else — or owned by
+        # nobody (NULL owner: legacy/backfilled, "hidden from everyone") — is
+        # off-limits, so a client-supplied run_id cannot inject into or claim
+        # another user's run. Treating NULL as "not yours" is what blocks the
+        # legacy-run takeover (str(None) never equals a real owner id).
+        owner_id = current_user_id(request)
+        with session_scope() as _own_check:
+            existing = crud.get_run(_own_check, run_id)
+            if existing is not None and str(existing.owner_id) != str(owner_id):
+                raise HTTPException(status_code=404, detail="Run not found.")
 
         base_dir = _safe_path(_UPLOAD_ROOT, run_id)
         os.makedirs(base_dir, exist_ok=True)
@@ -828,7 +928,7 @@ async def upload_dicoms(
         ]
 
         # Record the run and its patients (idempotent across chunked batches).
-        owner_id = current_user_id(request)
+        # owner_id was resolved above and gated for cross-tenant reuse.
         with session_scope() as session:
             crud.register_upload(session, run_id, patient_dirs, owner_id=owner_id)
 
@@ -851,7 +951,7 @@ async def upload_dicoms(
         )
 
 @app.post("/api/process-scans/{run_id}")
-async def start_processing(run_id: str, background_tasks: BackgroundTasks):
+async def start_processing(run_id: str, request: Request, background_tasks: BackgroundTasks):
     claimed = False
     try:
         base_dir = _safe_path(_UPLOAD_ROOT, run_id)
@@ -860,6 +960,15 @@ async def start_processing(run_id: str, background_tasks: BackgroundTasks):
             return JSONResponse({
                 'error': f"Upload directory not found: {run_id}"
             }, status_code=404)
+
+        # Strict isolation: only the run's owner may start its processing. A
+        # foreign or legacy-owned run is reported as not found (no existence
+        # leak, and it cannot occupy the single global GPU slot).
+        with session_scope() as session:
+            if not crud.run_owned_by(session, run_id, current_user_id(request)):
+                return JSONResponse({
+                    'error': f"Upload directory not found: {run_id}"
+                }, status_code=404)
 
         # Get patient directories inside DICOMS folder
         patient_dirs = [item for item in os.listdir(base_dir)
@@ -1268,12 +1377,16 @@ def find_input_directories(patient_path):
 
 
 @app.get("/api/process-status/{run_id}")
-def get_process_status(run_id: str, db=Depends(get_db)):
+def get_process_status(run_id: str, request: Request, db=Depends(get_db)):
     try:
         logger.debug(f"Getting status for run: {run_id}")
 
-        # DB is the source of truth and survives restarts.
-        status = crud.get_run_status_json(db, run_id)
+        # Strict isolation: a run the caller does not own is reported exactly
+        # like a non-existent one, so status polling cannot probe other tenants.
+        status = None
+        if crud.run_owned_by(db, run_id, current_user_id(request)):
+            # DB is the source of truth and survives restarts.
+            status = crud.get_run_status_json(db, run_id)
         if status is not None:
             return status
 
@@ -1294,10 +1407,11 @@ def get_process_status(run_id: str, db=Depends(get_db)):
         }, status_code=500)
 
 @app.get("/api/processed-runs")
-def get_processed_runs(db=Depends(get_db)):
+def get_processed_runs(request: Request, db=Depends(get_db)):
     try:
         # Indexed DB read (ordered newest-first); replaces the os.walk scan.
-        return crud.list_runs_json(db)
+        # Scoped to the caller's own runs (strict per-user isolation).
+        return crud.list_runs_json(db, current_user_id(request))
     except Exception as e:
         logger.error(f"Error getting processed runs: {str(e)}")
         traceback.print_exc()

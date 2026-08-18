@@ -3,8 +3,10 @@
 All tables live in the ``msx`` schema. GoTrue owns the ``auth`` schema in the
 same Postgres; ``runs.owner_id`` references a Supabase ``auth.users`` UUID but
 is intentionally NOT a DB-level foreign key — that would couple our migrations
-to GoTrue's first-boot ordering. In team mode every authenticated user sees all
-runs, so referential integrity on the owner is unnecessary.
+to GoTrue's first-boot ordering. Access is strict per-user isolation: a run is
+readable only by the user whose id equals ``owner_id`` (see crud.run_owned_by /
+user_owns_studies). A NULL owner (legacy / backfilled) is owned by nobody and
+is therefore hidden from everyone until an owner is assigned.
 
 Status/step values are plain strings (documented below) rather than Postgres
 enums, to keep migrations simple and additive.
