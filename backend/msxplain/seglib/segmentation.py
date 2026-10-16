@@ -595,7 +595,11 @@ class Segmentation():
             writer = pydicom_seg.MultiClassWriter(
                 template=dcm_seg_metadata,
                 inplane_cropping=False,     # Crop image slices to the minimum bounding box on x and y axes
-                skip_empty_slices=False,    # Don't encode slices with only zeros
+                # Encode only the slices where each segment is present. With
+                # False every segment got a frame on every slice (~47 lesions x
+                # ~176 slices), making each SEG ~70 MB instead of ~2-5 MB and
+                # slowing OHIF's download and parsing ~20x.
+                skip_empty_slices=True,
                 skip_missing_segment=False, #
             )
             
