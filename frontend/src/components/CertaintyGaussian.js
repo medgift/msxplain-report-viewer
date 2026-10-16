@@ -9,15 +9,26 @@ import './CertaintyGaussian.css';
  *
  * Each marker is positioned at x = Φ⁻¹(percentile / 100) (the standard-normal
  * quantile), so the 50th percentile sits at the peak, 95th to the right, etc.
- * The value (e.g. 0.91) is shown as the label; the percentile drives placement.
+ * The percentile also drives the label (e.g. "73rd"), so the number shown is
+ * where the value falls in the reference distribution, not the raw certainty.
  *
  * Props:
  *   markers         {Array<{ value:number, percentile:number|null, color:string, label?:string }>}
  *   accent          {string}  – fill/stroke colour for the bell (default app blue)
- *   showValueLabels {boolean} – draw the value above each marker (default true).
+ *   showValueLabels {boolean} – draw the percentile above each marker (default true).
  *                               Disable when several markers crowd together and
- *                               the values are already listed elsewhere (chips).
+ *                               the percentiles are already listed elsewhere (chips).
  */
+
+// Percentile (0–100) → rounded ordinal label, e.g. 72.6 → "73rd".
+export const formatPercentile = (p) => {
+  const n = Math.round(p);
+  const mod100 = n % 100;
+  const suffix = mod100 >= 11 && mod100 <= 13
+    ? 'th'
+    : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+};
 
 // ── Standard-normal quantile (probit) — Acklam's rational approximation ──
 const probit = (p) => {
@@ -168,7 +179,7 @@ const CertaintyGaussian = ({ markers = [], accent = '#2196f3', showValueLabels =
             {showValueLabels && (
               <text x={m.x} y={m.y + ly} textAnchor="middle"
                     className="cg-value-label" fill={m.color}>
-                {m.value.toFixed(2)}
+                {formatPercentile(m.percentile)}
               </text>
             )}
           </g>

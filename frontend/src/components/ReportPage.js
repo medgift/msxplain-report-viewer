@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Brain3DViewer from './Brain3DViewer';
-import CertaintyGaussian from './CertaintyGaussian';
+import CertaintyGaussian, { formatPercentile } from './CertaintyGaussian';
+import RegulatoryInfo from './RegulatoryInfo';
 import api, { authFetch } from '../api';
 import './ReportPage.css';
 
@@ -26,15 +27,15 @@ const InfoTip = ({ text }) => (
 
 const PATIENT_PLOT_INFO =
   'Reference distribution of patient-level certainty across the model’s test ' +
-  'population. The bell is that population; the marker shows where this patient falls. ' +
-  'Q1–Q3 split the population into four equal-sized quartiles; the bracket spans the ' +
-  'central 95% of patients.';
+  'population. The bell is that population; the marker and the number show this patient’s ' +
+  'percentile, i.e. the share of test patients with lower certainty. Q1–Q3 split the ' +
+  'population into four equal-sized quartiles; the bracket spans the central 95% of patients.';
 
 const LESION_PLOT_INFO =
   'Reference distribution of lesion-level certainty across all lesions in the model’s ' +
-  'test population. Each coloured marker is the mean certainty for that lesion type, placed ' +
-  'by its percentile. Q1–Q3 split the population into four equal-sized quartiles; the ' +
-  'bracket spans the central 95% of lesions.';
+  'test population. Each coloured marker is the mean certainty for that lesion type, shown ' +
+  'as its percentile (share of test lesions with lower certainty). Q1–Q3 split the ' +
+  'population into four equal-sized quartiles; the bracket spans the central 95% of lesions.';
 
 const ReportPage = () => {
   const { run_id, patient_name, session } = useParams();
@@ -174,6 +175,9 @@ const ReportPage = () => {
               </div>
             </section>
 
+            {/* ── Algorithm training / regulatory information ── */}
+            <RegulatoryInfo />
+
             {/* ── Band A: patient-level ── */}
             <section className="band band-2col band-patient">
               <div className="card brain-card">
@@ -192,13 +196,15 @@ const ReportPage = () => {
                 </div>
                 {patientMarker.length > 0 ? (
                   <>
-                    <div className="certainty-headline">
-                      <div className="certainty-metric">
-                        <span className="metric-value">{certainty.patient_certainty.toFixed(2)}</span>
-                        <span className="metric-unit">/ 1.00</span>
-                        <span className="metric-caption">Certainty</span>
+                    {certainty.patient_percentile != null && (
+                      <div className="certainty-headline">
+                        <div className="certainty-metric">
+                          <span className="metric-value">{formatPercentile(certainty.patient_percentile)}</span>
+                          <span className="metric-unit">percentile</span>
+                          <span className="metric-caption">Certainty</span>
+                        </div>
                       </div>
-                    </div>
+                    )}
                     <CertaintyGaussian markers={patientMarker} accent="#2196f3" />
                   </>
                 ) : (
@@ -243,7 +249,7 @@ const ReportPage = () => {
                           <span className="chip-dot" style={{ background: m.color }} />
                           <span className="chip-label">{m.label}</span>
                           <span className="chip-value">
-                            {m.value != null ? m.value.toFixed(2) : '–'}
+                            {m.percentile != null ? formatPercentile(m.percentile) : '–'}
                           </span>
                         </div>
                       ))}

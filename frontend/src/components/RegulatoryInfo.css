@@ -1,0 +1,139 @@
+/* ── Algorithm training information card ─────────────────────────────────── */
+.reg-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+.reg-card-head h3 {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 1.1rem;
+  color: #1a1a1a;
+}
+
+.reg-full-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #e3f0fd;
+  color: #1565c0;
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reg-full-button:hover { background: #d2e6fb; }
+
+.reg-full-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+  line-height: 1;
+}
+
+.reg-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.reg-card-block h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  color: #444;
+}
+.reg-card-block p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #555;
+}
+
+/* ── Full regulatory information modal ───────────────────────────────────── */
+.reg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  z-index: 200;
+}
+
+.reg-modal {
+  position: relative;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  width: min(720px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 1.75rem 2rem 1.5rem;
+}
+
+.reg-close {
+  position: absolute;
+  top: 0.9rem;
+  right: 1.1rem;
+  background: none;
+  border: none;
+  font-size: 1.7rem;
+  line-height: 1;
+  color: #555;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+}
+.reg-close:hover { color: #000; }
+
+.reg-modal-title {
+  margin: 0 2rem 0.9rem 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  line-height: 1.25;
+  border-bottom: 1px solid #e5e5e5;
+  padding-bottom: 0.9rem;
+}
+
+.reg-modal-body {
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.reg-section + .reg-section { margin-top: 1.1rem; }
+
+.reg-section h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  border: none;
+  padding: 0;
+}
+.reg-section p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: #444;
+}
+
+@media (max-width: 1100px) {
+  .reg-card-grid { grid-template-columns: 1fr; }
+}
