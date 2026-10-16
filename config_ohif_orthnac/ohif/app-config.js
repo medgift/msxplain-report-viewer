@@ -52,13 +52,26 @@ window.config = {
     // NOTE: the `local` (drag-and-drop file) data source is intentionally NOT
     // registered, so users cannot side-load arbitrary studies.
   ],
-  // Hide export/download affordances. These customizationService keys remove
-  // the study-browser download action and the segmentation/measurement export
-  // panels. Toolbar-level "Download/Capture" removal depends on the active
-  // mode; verify against the pinned OHIF image and extend here if any export
-  // control remains visible.
+  // Hide export/download affordances (OHIF 3.13 customization API; the 3.9
+  // keys `ohif.disableExport` / `ohif.studyBrowser.customContextMenu` no longer
+  // exist). Applied in the `global` phase, i.e. after extensions register their
+  // defaults and before the mode seeds its toolbar from them.
   customizationService: {
-    'ohif.studyBrowser.customContextMenu': { menuItems: [] },
-    'ohif.disableExport': true,
+    global: {
+      // "Capture" opens the viewport screenshot/download modal — drop it from
+      // both the default and the segmentation-mode toolbars.
+      'cornerstone.toolbarSections': {
+        primary: { $apply: ids => ids.filter(id => id !== 'Capture') },
+      },
+      'cornerstone.segmentationToolbarSections': {
+        primary: { $apply: ids => (ids || []).filter(id => id !== 'Capture') },
+      },
+      // Segmentations are our read-only outputs: no editing, no adding segments.
+      'panelSegmentation.disableEditing': { $set: true },
+      'panelSegmentation.showAddSegment': { $set: false },
+      // The per-segmentation "..." menu holds Export (DICOM SEG / RTSS / CSV
+      // download, store) plus create/rename/delete — replace it with nothing.
+      'panelSegmentation.customDropdownMenuContent': { $set: () => null },
+    },
   },
 };

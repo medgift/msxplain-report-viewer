@@ -87,8 +87,13 @@ const ReportPage = () => {
       // user can retry. Surface it in the console for debugging.
       console.error('Could not open viewer session:', err);
     }
+    // Open in OHIF's MPR layout (axial, sagittal, coronal), using the
+    // "reformat" stage so the planes follow the scan's own orientation rather
+    // than the scanner axes (oblique acquisitions otherwise look rotated).
+    // The stage id is added by our OHIF build (config_ohif_orthnac/ohif/Dockerfile).
     window.open(
-      `/viewer/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}`,
+      `/viewer/viewer?StudyInstanceUIDs=${encodeURIComponent(uid)}` +
+        '&hangingProtocolId=mpr&stageId=mprReformat',
       '_blank',
       'noopener,noreferrer'
     );
