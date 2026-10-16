@@ -659,7 +659,9 @@ class Segmentation():
             
             segments.append(get_segment(roi, abbr, name, color))
 
-        series_description=f"{base_name}_segmentation"
+        # SeriesDescription is what OHIF shows in the series list, so the
+        # caller-supplied base_name is used verbatim (no "_segmentation" suffix).
+        series_description = base_name
         
         basic_info = {
             "ContentCreatorName": "XXX via pydicom-seg",

@@ -32,6 +32,16 @@ from db.summary import compute_report_summary
 
 logger = logging.getLogger(__name__)
 
+# DCM-SEG series currently published to Orthanc/OHIF, by output filename.
+# Anything else matching *_dcmseg.dcm in a session folder is from an older run
+# and is deleted before upload.
+CURRENT_DCM_SEG_FILES = {
+    "flair_lesion_mask_dcmseg.dcm",
+    "t1_lesion_mask_dcmseg.dcm",
+    "flair_regions_lesion_mask_dcmseg.dcm",
+    "t1_regions_lesion_mask_dcmseg.dcm",
+}
+
 # Configure logging at application startup
 logging.basicConfig(
     level=logging.INFO,
@@ -1158,11 +1168,13 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                             # Convert segmentation to DICOM-SEG using filtered lesion maps
                             logger.info("Converting filtered NIFTI label maps to DCM SEG...")
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, filtered_lesion_map_flair, labels_path, Path(flair_dir), "flair"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_flair, labels_path,
+                                Path(flair_dir), "flair_lesion_mask"
                             ).result()
                             
                             executor.submit(
-                                msxplain.nifti_to_dcmseg, filtered_lesion_map_t1, labels_path, Path(t1_dir), "t1n"
+                                msxplain.nifti_to_dcmseg, filtered_lesion_map_t1, labels_path,
+                                Path(t1_dir), "t1_lesion_mask"
                             ).result()
                             
                             # Clean up intermediate filtered NIFTI files (only if they were created)
@@ -1174,63 +1186,8 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 logger.info(f"Removing filtered file: {filtered_lesion_map_t1}")
                                 os.remove(filtered_lesion_map_t1)
                             
-                            # ── Certainty-filtered DCM-SEG (high-confidence lesions only) ──
-                            # Generates parallel DICOM SEG files that contain ONLY lesions
-                            # with LLC > 0.75 (clinically validated certainty threshold).
-                            try:
-                                certainty_labels_path = executor.submit(
-                                    msxplain.compute_uncertainty_labels, report_df, 0.25
-                                ).result()
-
-                                # Filter FLAIR-space lesion map by certainty
-                                unc_flair_map, unc_flair_has_lesions = executor.submit(
-                                    msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_flair_space_path, report_df, 0.25, "_flair_certainty"
-                                ).result()
-
-                                # Filter T1-space lesion map by certainty
-                                unc_t1_map, unc_t1_has_lesions = executor.submit(
-                                    msxplain.create_uncertainty_filtered_lesion_map,
-                                    lesion_map_path, report_df, 0.25, "_t1_certainty"
-                                ).result()
-
-                                # Convert to DCM-SEG only if at least one lesion survived
-                                if unc_flair_has_lesions:
-                                    logger.info("Converting certainty-filtered FLAIR label map to DCM SEG...")
-                                    executor.submit(
-                                        msxplain.nifti_to_dcmseg,
-                                        unc_flair_map, certainty_labels_path,
-                                        Path(flair_dir), "flair_certainty"
-                                    ).result()
-                                else:
-                                    logger.info("No high-confidence FLAIR lesions — skipping certainty DCM-SEG")
-
-                                if unc_t1_has_lesions:
-                                    logger.info("Converting certainty-filtered T1 label map to DCM SEG...")
-                                    executor.submit(
-                                        msxplain.nifti_to_dcmseg,
-                                        unc_t1_map, certainty_labels_path,
-                                        Path(t1_dir), "t1n_certainty"
-                                    ).result()
-                                else:
-                                    logger.info("No high-confidence T1 lesions — skipping certainty DCM-SEG")
-
-                                # Clean up intermediate certainty-filtered NIfTI files
-                                for unc_path in [unc_flair_map, unc_t1_map]:
-                                    if os.path.exists(unc_path):
-                                        os.remove(unc_path)
-                                if os.path.exists(certainty_labels_path):
-                                    os.remove(certainty_labels_path)
-
-                            except Exception as unc_e:
-                                logger.warning(
-                                    f"Certainty-filtered DCM-SEG generation failed "
-                                    f"(non-blocking): {unc_e}"
-                                )
-                                traceback.print_exc()
-
                             # ── Brain-region overlay DCM-SEGs ──────────────
-                            # Regions-only and Regions+Lesions for both FLAIR and T1.
+                            # Regions+Lesions overlay for both FLAIR and T1.
                             # FLAIR: regions registered from T1→FLAIR via ANTs inverse.
                             # T1: regions already in native T1 space (parcellation_dir).
                             try:
@@ -1241,22 +1198,6 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
 
                                 if flair_regions_dir is None:
                                     raise RuntimeError("Region registration to FLAIR space failed")
-
-                                # ── FLAIR regions-only ──
-                                reg_flair_nifti, reg_flair_labels, reg_flair_ok = executor.submit(
-                                    msxplain.create_regions_nifti_and_labels,
-                                    flair_regions_dir
-                                ).result()
-
-                                if reg_flair_ok:
-                                    logger.info("Converting FLAIR regions-only NIfTI to DCM-SEG...")
-                                    executor.submit(
-                                        msxplain.nifti_to_dcmseg,
-                                        reg_flair_nifti, reg_flair_labels,
-                                        Path(flair_dir), "flair_regions"
-                                    ).result()
-                                else:
-                                    logger.info("No FLAIR region masks — skipping regions-only DCM-SEG")
 
                                 # ── FLAIR regions + lesions ──
                                 rl_flair_nifti, rl_flair_labels, rl_flair_ok = executor.submit(
@@ -1270,26 +1211,10 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
                                         rl_flair_nifti, rl_flair_labels,
-                                        Path(flair_dir), "flair_regions_lesions"
+                                        Path(flair_dir), "flair_regions_lesion_mask"
                                     ).result()
                                 else:
                                     logger.info("No FLAIR regions+lesions content — skipping DCM-SEG")
-
-                                # ── T1 regions-only (native T1 space) ──
-                                reg_t1_nifti, reg_t1_labels, reg_t1_ok = executor.submit(
-                                    msxplain.create_regions_nifti_and_labels,
-                                    None  # uses parcellation_dir (T1 space)
-                                ).result()
-
-                                if reg_t1_ok:
-                                    logger.info("Converting T1 regions-only NIfTI to DCM-SEG...")
-                                    executor.submit(
-                                        msxplain.nifti_to_dcmseg,
-                                        reg_t1_nifti, reg_t1_labels,
-                                        Path(t1_dir), "t1n_regions"
-                                    ).result()
-                                else:
-                                    logger.info("No T1 region masks — skipping regions-only DCM-SEG")
 
                                 # ── T1 regions + lesions ──
                                 rl_t1_nifti, rl_t1_labels, rl_t1_ok = executor.submit(
@@ -1303,16 +1228,14 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                     executor.submit(
                                         msxplain.nifti_to_dcmseg,
                                         rl_t1_nifti, rl_t1_labels,
-                                        Path(t1_dir), "t1n_regions_lesions"
+                                        Path(t1_dir), "t1_regions_lesion_mask"
                                     ).result()
                                 else:
                                     logger.info("No T1 regions+lesions content — skipping DCM-SEG")
 
                                 # Clean up intermediate NIfTI/labels files
                                 for tmp in [
-                                    reg_flair_nifti, reg_flair_labels,
                                     rl_flair_nifti, rl_flair_labels,
-                                    reg_t1_nifti, reg_t1_labels,
                                     rl_t1_nifti, rl_t1_labels,
                                 ]:
                                     if tmp and os.path.exists(tmp):
@@ -1325,8 +1248,17 @@ def process_all_patients(run_id: str, base_dir: str, patient_dirs: list):
                                 )
                                 traceback.print_exc()
 
+                            # Drop DCM-SEG files left over from previous runs
+                            # (older naming / discontinued overlays), otherwise a
+                            # re-run would re-upload them to Orthanc alongside the
+                            # four series below.
+                            for stale in os.listdir(session_output_dir):
+                                if stale.endswith("_dcmseg.dcm") and stale not in CURRENT_DCM_SEG_FILES:
+                                    logger.info(f"Removing obsolete DCM-SEG file: {stale}")
+                                    os.remove(os.path.join(session_output_dir, stale))
+
                             # Upload ALL DCM-SEG outputs to Orthanc
-                            # (includes original, certainty-filtered, and region overlays)
+                            # (lesion masks + regions/lesions overlays, FLAIR and T1)
                             upload_to_orthanc(session_output_dir)
                             
                             elapsed = time.time() - series_start_time
