@@ -41,7 +41,8 @@ const PhenotypeList = () => (
             {` (${p.name})`}
           </>
         ) : (
-          p.name
+          // No acronym: bold the name itself so every phenotype's lead is bold.
+          <strong>{p.name}</strong>
         )}
         {`: ${p.count}`}
       </React.Fragment>
