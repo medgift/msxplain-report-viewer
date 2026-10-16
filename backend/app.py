@@ -306,6 +306,37 @@ def _dicomweb_study_uids(path: str, query_params) -> set:
     return set()
 
 
+# One pooled HTTP session to Orthanc for all proxy requests: OHIF fires
+# hundreds of WADO-RS requests per study, and a fresh TCP connection each time
+# adds latency to every frame.
+_orthanc_http = requests.Session()
+_orthanc_http.mount(
+    "http://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=64)
+)
+
+# Short-lived cache of positive ownership checks, keyed by (user, study UIDs),
+# so the per-frame requests of one viewing session don't each hit Postgres.
+# Only grants are cached; the TTL bounds how long a revoked run stays visible.
+_OWNERSHIP_TTL = 60.0  # seconds
+_ownership_cache: dict = {}
+
+
+def _user_owns_studies_cached(db, study_uids: set, user_id) -> bool:
+    if not study_uids or not user_id:
+        return False
+    key = (user_id, frozenset(study_uids))
+    now = time.monotonic()
+    expires = _ownership_cache.get(key)
+    if expires is not None and expires > now:
+        return True
+    if not crud.user_owns_studies(db, study_uids, user_id):
+        return False
+    if len(_ownership_cache) > 10_000:  # bound memory; entries are tiny
+        _ownership_cache.clear()
+    _ownership_cache[key] = now + _OWNERSHIP_TTL
+    return True
+
+
 @app.get("/api/dicom-web/{path:path}")
 def dicomweb_proxy(path: str, request: Request, db=Depends(get_db)):
     """Authenticated, read-only DICOMweb passthrough to Orthanc for OHIF."""
@@ -317,7 +348,7 @@ def dicomweb_proxy(path: str, request: Request, db=Depends(get_db)):
     # own runs. Requests not scoped to a specific study are refused so a user
     # cannot enumerate or stream another tenant's imaging.
     study_uids = _dicomweb_study_uids(path, request.query_params)
-    if not crud.user_owns_studies(db, study_uids, current_user_id(request)):
+    if not _user_owns_studies_cached(db, study_uids, current_user_id(request)):
         audit_logger.warning(
             "dicomweb DENIED user=%s ip=%s path=%s",
             current_user_id(request), _client_ip(request), path,
@@ -327,13 +358,15 @@ def dicomweb_proxy(path: str, request: Request, db=Depends(get_db)):
     upstream_url = f"{ORTHANC_URL}/dicom-web/{path}"
     # Forward only content negotiation; the user's Authorization/cookie is NOT
     # forwarded — we authenticate to Orthanc with its own credentials.
-    fwd_headers = {}
+    # identity: Orthanc would otherwise gzip each response only for requests
+    # to decompress it again here (wasted CPU on both sides of a local hop).
+    fwd_headers = {"Accept-Encoding": "identity"}
     accept = request.headers.get("Accept")
     if accept:
         fwd_headers["Accept"] = accept
 
     try:
-        upstream = requests.get(
+        upstream = _orthanc_http.get(
             upstream_url,
             params=list(request.query_params.multi_items()),
             headers=fwd_headers,

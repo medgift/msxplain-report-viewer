@@ -114,6 +114,51 @@ def test_study_uids_empty_for_unscoped_requests():
     ) == set()
 
 
+# ── DICOMweb ownership cache ───────────────────────────────────────────────
+def test_ownership_cache_caches_grants_only(monkeypatch):
+    calls = []
+    owned = {("alice", "s1")}
+
+    def fake_owns(db, uids, user):
+        calls.append((user, frozenset(uids)))
+        return all((user, u) in owned for u in uids)
+
+    monkeypatch.setattr(app_module.crud, "user_owns_studies", fake_owns)
+    monkeypatch.setattr(app_module, "_ownership_cache", {})
+    check = app_module._user_owns_studies_cached
+
+    # A grant is cached: the second request doesn't hit the DB.
+    assert check(None, {"s1"}, "alice") is True
+    assert check(None, {"s1"}, "alice") is True
+    assert len(calls) == 1
+
+    # Denials are never cached, and grants are per user.
+    assert check(None, {"s1"}, "bob") is False
+    assert check(None, {"s1"}, "bob") is False
+    assert len(calls) == 3
+
+    # Empty scope / anonymous fail closed without a DB call.
+    assert check(None, set(), "alice") is False
+    assert check(None, {"s1"}, None) is False
+    assert len(calls) == 3
+
+
+def test_ownership_cache_expires(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        app_module.crud, "user_owns_studies",
+        lambda db, uids, user: calls.append(1) or True,
+    )
+    monkeypatch.setattr(app_module, "_ownership_cache", {})
+    now = [1000.0]
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: now[0])
+
+    app_module._user_owns_studies_cached(None, {"s1"}, "alice")
+    now[0] += app_module._OWNERSHIP_TTL + 1
+    app_module._user_owns_studies_cached(None, {"s1"}, "alice")
+    assert len(calls) == 2
+
+
 # ── wiring: run-scoped routes must enforce ownership ──────────────────────
 def _route(path):
     for r in app_module.app.routes:

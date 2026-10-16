@@ -43,7 +43,7 @@
   "OrthancPeersInDatabase": false,
   "HttpProxy": "",
 
-  "HttpVerbose": true,
+  "HttpVerbose": false,
 
   "HttpTimeout": 10,
   "HttpsVerifyPeers": true,
