@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
+import { signOutEverywhere } from '../api';
 import './LogoutButton.css';
 
 // Fixed top-right sign-out control, rendered by ProtectedRoute so it is
@@ -10,9 +10,10 @@ const LogoutButton = () => {
 
   const handleLogout = async () => {
     setLoading(true);
-    // signOut clears the local session even if revoking the refresh token
-    // server-side fails (e.g. offline), so we always end up logged out.
-    await supabase.auth.signOut();
+    // Clears the OHIF viewer cookie, then the Supabase session. signOut clears
+    // the local session even if revoking server-side fails (e.g. offline), so
+    // we always end up logged out.
+    await signOutEverywhere();
     setLoading(false);
   };
 

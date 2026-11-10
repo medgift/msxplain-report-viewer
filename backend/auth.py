@@ -9,9 +9,13 @@ global middleware (rather than per-route dependencies) is the mechanical
 guarantee that no new route can be added unauthenticated by mistake.
 """
 import os
+import time
+import uuid
 import logging
 
 import jwt
+from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -38,6 +42,59 @@ PUBLIC_PATHS = {"/api/health"}
 # accept a short-lived HttpOnly session cookie issued by /api/viewer-session.
 DICOMWEB_PREFIX = "/api/dicom-web/"
 VIEWER_COOKIE = "dcmw"
+# nginx `auth_request` target guarding the OHIF app itself (/viewer/). It is the
+# only other path where the viewer cookie is accepted.
+VIEWER_AUTH_PATH = "/api/viewer-auth"
+
+
+def _cookie_allowed(path: str) -> bool:
+    return path.startswith(DICOMWEB_PREFIX) or path == VIEWER_AUTH_PATH
+
+
+# ── Server-side session revocation for the viewer cookie ──────────────────
+# A JWT is stateless: signing out in the SPA does not invalidate it, so a
+# lingering `dcmw` cookie would keep the viewer working until the token
+# expires. For cookie-authenticated requests we therefore also require the
+# token's GoTrue session (`session_id` claim) to still exist in auth.sessions.
+# GoTrue deletes that row on sign-out (and on inactivity/timebox expiry), so
+# viewer access dies with the session. Positive results are cached briefly so
+# the hundreds of per-frame WADO requests don't each hit Postgres; the TTL is
+# the maximum time a signed-out cookie can still be honoured.
+_SESSION_LIVE_TTL = 10.0  # seconds
+_live_sessions: dict = {}
+
+
+def _query_session_live(session_id: str) -> bool:
+    from db.engine import session_scope
+
+    with session_scope() as db:
+        row = db.execute(
+            text(
+                "SELECT 1 FROM auth.sessions WHERE id = :sid "
+                "AND (not_after IS NULL OR not_after > now())"
+            ),
+            {"sid": session_id},
+        ).first()
+    return row is not None
+
+
+def session_is_live(session_id) -> bool:
+    """True iff the GoTrue session behind a token has not been revoked."""
+    try:
+        sid = str(uuid.UUID(str(session_id)))
+    except (ValueError, TypeError):
+        return False
+    now = time.monotonic()
+    expires = _live_sessions.get(sid)
+    if expires is not None and expires > now:
+        return True
+    if not _query_session_live(sid):
+        _live_sessions.pop(sid, None)
+        return False
+    if len(_live_sessions) > 10_000:  # bound memory; entries are tiny
+        _live_sessions.clear()
+    _live_sessions[sid] = now + _SESSION_LIVE_TTL
+    return True
 
 
 def decode_supabase_jwt(token: str) -> dict:
@@ -70,11 +127,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         token = _bearer_token(request.headers.get("Authorization", ""))
-        # DICOMweb requests from the OHIF tab carry the session cookie instead
-        # of a bearer header. The cookie value is itself a Supabase JWT, so it
-        # goes through the exact same verification below.
-        if not token and path.startswith(DICOMWEB_PREFIX):
+        # DICOMweb requests from the OHIF tab (and nginx's /viewer/ auth
+        # check) carry the session cookie instead of a bearer header. The
+        # cookie value is itself a Supabase JWT, so it goes through the exact
+        # same verification below, plus a session-revocation check.
+        from_cookie = False
+        if not token and _cookie_allowed(path):
             token = request.cookies.get(VIEWER_COOKIE) or None
+            from_cookie = token is not None
         if not token:
             return JSONResponse(
                 {"detail": "Authentication required"}, status_code=401
@@ -91,6 +151,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 {"detail": "Server auth misconfigured"}, status_code=500
             )
+
+        if from_cookie:
+            try:
+                live = await run_in_threadpool(
+                    session_is_live, claims.get("session_id")
+                )
+            except Exception as exc:  # noqa: BLE001 - fail closed on DB errors
+                logger.error("Viewer session check failed: %s", exc)
+                live = False
+            if not live:
+                return JSONResponse(
+                    {"detail": "Session has ended"}, status_code=401
+                )
 
         # Make the authenticated user available to handlers (owner_id, etc.).
         request.state.user = claims

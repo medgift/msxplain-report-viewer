@@ -25,7 +25,9 @@ import logging
 from alembic import command
 from alembic.config import Config as AlembicConfig
 
-from auth import AuthMiddleware, current_user_id, VIEWER_COOKIE, _bearer_token
+from auth import (
+    AuthMiddleware, current_user_id, VIEWER_COOKIE, VIEWER_AUTH_PATH, _bearer_token,
+)
 from db import crud, models
 from db.engine import get_db, session_scope, wait_for_db
 from db.summary import compute_report_summary
@@ -198,6 +200,7 @@ async def health():
 #     own credentials). Only GET is defined, so STOW uploads and DELETEs return
 #     405 — the viewer can read images but never modify or export via the PACS.
 VIEWER_COOKIE_MAX_AGE = 3600  # seconds; matches the Supabase token lifetime
+_LEGACY_VIEWER_COOKIE_PATH = "/api/dicom-web"
 
 # Dedicated audit logger. All viewer access to patient imaging flows through
 # the two endpoints below, so this is the single place to record "who viewed
@@ -251,14 +254,53 @@ def open_viewer_session(request: Request):
         httponly=True,
         secure=is_https,
         samesite="lax",
-        path="/api/dicom-web",
+        # Site-wide path so the browser also sends it to /viewer/ (nginx gates
+        # the OHIF app on it via /api/viewer-auth). The backend only ACCEPTS
+        # the cookie on the DICOMweb prefix and the viewer-auth check, so it
+        # cannot authenticate any other API call.
+        path="/",
     )
+    # Drop any cookie left from older builds that scoped it to the proxy path.
+    resp.delete_cookie(VIEWER_COOKIE, path=_LEGACY_VIEWER_COOKIE_PATH)
     audit_logger.info(
         "viewer-session opened user=%s ip=%s",
         current_user_id(request),
         _client_ip(request),
     )
     return resp
+
+
+@app.delete("/api/viewer-session")
+def close_viewer_session(request: Request):
+    """Clear the viewer cookie (called by the SPA on sign-out).
+
+    The session-revocation check in AuthMiddleware already makes a lingering
+    cookie useless once GoTrue drops the session; this removes it as well.
+    """
+    is_https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp = Response(status_code=204)
+    for cookie_path in ("/", _LEGACY_VIEWER_COOKIE_PATH):
+        resp.delete_cookie(
+            VIEWER_COOKIE, path=cookie_path, httponly=True,
+            secure=is_https, samesite="lax",
+        )
+    audit_logger.info(
+        "viewer-session closed user=%s ip=%s",
+        current_user_id(request),
+        _client_ip(request),
+    )
+    return resp
+
+
+@app.get(VIEWER_AUTH_PATH)
+def viewer_auth():
+    """nginx ``auth_request`` target that gates the OHIF app at /viewer/.
+
+    Reaching this handler means AuthMiddleware accepted the viewer cookie (a
+    valid JWT whose GoTrue session is still live); otherwise it already
+    answered 401 and nginx redirects the browser to /login.
+    """
+    return Response(status_code=204)
 
 
 # DICOMweb resource roots OHIF issues QIDO/WADO-RS requests against. The proxy

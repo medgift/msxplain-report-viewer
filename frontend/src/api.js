@@ -8,6 +8,27 @@ export async function getAccessToken() {
   return data && data.session ? data.session.access_token : null;
 }
 
+// Sign out of the app AND the OHIF viewer. The viewer authenticates with an
+// HttpOnly cookie that JS cannot touch, so ask the backend to clear it first
+// (while the access token is still valid), then end the Supabase session —
+// which also revokes it server-side, so any lingering cookie stops working.
+export async function signOutEverywhere() {
+  try {
+    const token = await getAccessToken();
+    if (token) {
+      await fetch('/api/viewer-session', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
+      });
+    }
+  } catch (err) {
+    // Non-fatal: the backend rejects the cookie once the session is gone.
+    console.error('Could not clear viewer session:', err);
+  }
+  await supabase.auth.signOut();
+}
+
 function redirectToLogin() {
   supabase.auth.signOut().finally(() => {
     if (window.location.pathname !== '/login') {
