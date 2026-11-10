@@ -59,7 +59,8 @@ def run_parcellation(t1_path, pred_path, parcellation_dir, device="cpu"):
             "RightCerebralCortex": (41.5, 42.5),
             "RightLateralVentricle": (42.5, 43.5),
             "RightCerebellumWM": (45.5, 46.5),
-            "RightCerebellumCortex": (46.5, 47.5)
+            "RightCerebellumCortex": (46.5, 47.5),
+            "SynthsegLesions": (76.5, 77.5)
         }
         
         for name, (lower, upper) in structures.items():
@@ -84,6 +85,15 @@ def run_parcellation(t1_path, pred_path, parcellation_dir, device="cpu"):
         ], 
                        stdout=subprocess.DEVNULL,
                        check=True)
+        subprocess.run([
+                    "fslmaths",
+                    os.path.join(parcellation_dir, "WM_Mask.nii.gz"),
+                    "-add",
+                    os.path.join(parcellation_dir, "SynthsegLesions.nii.gz"),
+                    os.path.join(parcellation_dir, "WM_Mask.nii.gz")
+                ], 
+                               stdout=subprocess.DEVNULL,
+                               check=True)
         subprocess.run([
             "fslmaths",
             os.path.join(parcellation_dir, "WM_Mask.nii.gz"),
