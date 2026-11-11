@@ -15,11 +15,14 @@ import numpy as np
 import pydicom
 import requests
 from typing import List, Dict, Optional
-from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from msxplain.msxplain_report import MSXplainReport
+from msxplain.report_provider.certainty_reference import (
+    lesion_certainty_reference,
+    patient_certainty_reference,
+    percentile_of,
+)
 from msxplain.orthanc.upload_to_orthanc import upload_to_orthanc
-import scipy.stats as stats
 import logging
 
 from alembic import command
@@ -473,63 +476,6 @@ def format_birth_date(date_str):
     except ValueError:
         return "Unknown"
 
-# Reference distributions from the test set (used to locate a patient/lesion
-# within the population via percentile rank).
-#   PSU_data.csv – patient-level: columns include 'PSC' (certainty = 1 − PSU)
-#   LLU_data.csv – lesion-level: column 'LLU' (uncertainty); certainty = 1 − LLU
-PSU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "PSU_data.csv")
-LLU_DATA_FILEPATH = os.path.join(os.path.dirname(__file__), "msxplain", "configs", "LLU_data.csv")
-
-
-@lru_cache(maxsize=8)
-def _load_reference_certainties(filepath: str, value_col: str, invert: bool) -> Optional[np.ndarray]:
-    """Load a pooled reference distribution of certainty values from the test set.
-
-    The result is cached per (filepath, value_col, invert): reference
-    distributions are static deployment artifacts, so this avoids re-parsing the
-    CSV on every /api/report request. A missing file caches as None for the
-    process lifetime — provision the CSV before startup, or restart after adding.
-
-    Args:
-        filepath: Path to the reference CSV.
-        value_col: Column to read (e.g. 'PSC' for patient-level, 'LLU' for lesion-level).
-        invert: If True, the column holds uncertainty and certainty = 1 − value.
-
-    Returns:
-        np.ndarray of certainty values (0–1), or None if unavailable.
-    """
-    try:
-        if not os.path.exists(filepath):
-            logger.warning(f"Reference distribution not found: {filepath}")
-            return None
-        ref_df = pd.read_csv(filepath)
-        if value_col not in ref_df.columns:
-            logger.warning(f"Column '{value_col}' missing in {filepath}")
-            return None
-        values = pd.to_numeric(ref_df[value_col], errors='coerce').dropna().to_numpy()
-        if values.size == 0:
-            return None
-        return 1.0 - values if invert else values
-    except Exception as e:
-        logger.warning(f"Could not load reference distribution {filepath}: {e}")
-        return None
-
-
-def _percentile_of(certainty: Optional[float], reference: Optional[np.ndarray]) -> Optional[float]:
-    """Return the percentile (0–100) of a certainty value within a reference distribution.
-
-    Higher certainty → higher percentile (i.e. "X % of the population scored lower").
-    Returns None when the value or reference data is unavailable.
-    """
-    if certainty is None or reference is None or reference.size == 0:
-        return None
-    try:
-        return round(float(stats.percentileofscore(reference, certainty, kind='mean')), 1)
-    except Exception as e:
-        logger.warning(f"Could not compute percentile: {e}")
-        return None
-
-
 # Allowed NIfTI filenames that can be served for 3D visualization
 _ALLOWED_NIFTI_FILES = frozenset({
     "flair_brain.nii.gz",
@@ -832,8 +778,8 @@ async def get_report(
         }
 
         # Reference test-set distributions (certainty values, 0–1)
-        psc_reference = _load_reference_certainties(PSU_DATA_FILEPATH, "PSC", invert=False)
-        llc_reference = _load_reference_certainties(LLU_DATA_FILEPATH, "LLU", invert=True)
+        psc_reference = patient_certainty_reference()
+        llc_reference = lesion_certainty_reference()
 
         try:
             # Get patient-level certainty (1 − PSU) from first row if available
@@ -841,7 +787,7 @@ async def get_report(
                 psu_value = df['PSU'].iloc[0]
                 if pd.notna(psu_value):
                     certainty_data["patient_certainty"] = round(1.0 - float(psu_value), 6)
-                    certainty_data["patient_percentile"] = _percentile_of(
+                    certainty_data["patient_percentile"] = percentile_of(
                         certainty_data["patient_certainty"], psc_reference
                     )
                     logger.info(
@@ -875,7 +821,7 @@ async def get_report(
                             avg_certainty = round(1.0 - avg_val if use_inversion else avg_val, 6)
                             logger.debug(f"Average certainty for {lesion_type}: {avg_certainty}")
                     certainty_data["lesion_type_certainties"][lesion_type] = avg_certainty
-                    certainty_data["lesion_type_percentiles"][lesion_type] = _percentile_of(
+                    certainty_data["lesion_type_percentiles"][lesion_type] = percentile_of(
                         avg_certainty, llc_reference
                     )
                         

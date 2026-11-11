@@ -16,6 +16,11 @@ from .report_provider.parcellation_processing import run_parcellation
 from .report_provider.lesion_information import generate_lesion_report
 from .report_provider.ensemble_inference import run_ensemble_inference
 from .report_provider.compute_uncertainty import compute_uncertainties
+from .report_provider.certainty_reference import (
+    format_percentile,
+    lesion_certainty_reference,
+    percentile_of,
+)
 from .utils.utils import transform_registration_params
 from .seglib.segmentation import Segmentation
 
@@ -397,47 +402,63 @@ class MSXplainReport:
         return report_df
 
     @staticmethod
-    def _make_sequential_remap(original_ids: list) -> dict:
-        """Return {original_id: new_sequential_id} mapping, starting at 1.
+    def _certainty_order_remap(report_df: pd.DataFrame, original_ids: list) -> dict:
+        """Return {original_id: segment_number} with segment numbers 1-N.
 
-        Ensures DCM-SEG SegmentNumbers are always 1-N with no gaps regardless
-        of which lesion indices survived filtering.  OHIF Viewer indexes its
-        colour LUT by SegmentNumber, so gaps cause palette cycling and wrong
-        colours for the higher-numbered segments.
+        Lesions are numbered by LLC (certainty) from high to low, so OHIF lists
+        the most certain lesions first. Lesions without LLC go last; ties keep
+        the original index order.
+
+        Numbers are always 1-N with no gaps regardless of which lesion indices
+        survived filtering. OHIF indexes its colour LUT by SegmentNumber, so
+        gaps cause palette cycling and wrong colours for the higher segments.
         """
-        return {old_id: new_id for new_id, old_id in enumerate(sorted(original_ids), start=1)}
+        llc = {}
+        if 'LLC' in report_df.columns:
+            llc = dict(zip(report_df['Lesion Index'].astype(int), report_df['LLC']))
+
+        def sort_key(lesion_id):
+            value = llc.get(int(lesion_id))
+            missing = value is None or pd.isna(value)
+            return (missing, 0.0 if missing else -float(value), int(lesion_id))
+
+        ordered = sorted((int(i) for i in original_ids), key=sort_key)
+        return {old_id: new_id for new_id, old_id in enumerate(ordered, start=1)}
+
+    @staticmethod
+    def _lesion_segment_name(row) -> str:
+        """Segment name shown in OHIF: "<original_id> <Lesion Type> (Certainty: <pct>)".
+
+        Certainty is the lesion's LLC percentile within the test-set lesion
+        population, the same scale the report uses. Falls back to the raw LLC
+        when the reference distribution is not available.
+        """
+        name = f"{int(row['Lesion Index'])} {row['Lesion Type']}"
+        llc = row.get('LLC')
+        if llc is None or pd.isna(llc):
+            return name
+        pct = percentile_of(float(llc), lesion_certainty_reference())
+        if pct is None:
+            return f"{name} (LLC: {float(llc):.3f})"
+        return f"{name} (Certainty: {format_percentile(pct)} percentile)"
+
+    def _lesion_labels(self, lesions_df: pd.DataFrame) -> pd.DataFrame:
+        """Labels (roi_id, roi_name) for the given lesions, numbered by certainty high→low."""
+        remap = self._certainty_order_remap(lesions_df, lesions_df['Lesion Index'].tolist())
+        rows = [
+            (remap[int(row['Lesion Index'])], self._lesion_segment_name(row))
+            for _, row in lesions_df.iterrows()
+        ]
+        return pd.DataFrame(sorted(rows), columns=['roi_id', 'roi_name'])
 
     def compute_labels(self, report_df):
         
         # Filter out False Positive lesions first, using the raw Lesion Type column
         filtered_df = report_df[report_df['Lesion Type'] != 'False Positive']
         
-        # Build labels from filtered DataFrame
-        # Format: "<original_id> <Lesion Type> (LLC: <certainty>)" so the original index
-        # is visible in OHIF even after sequential remapping.
-        if 'LLC' in filtered_df.columns:
-            roi_names = filtered_df.apply(
-                lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
-                    if pd.notna(row['LLC'])
-                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
-                ),
-                axis=1
-            )
-        else:
-            roi_names = filtered_df.apply(
-                lambda row: f"{int(row['Lesion Index'])} {row['Lesion Type']}",
-                axis=1
-            )
-        
-        labels_df = pd.DataFrame({
-            'roi_id': filtered_df['Lesion Index'],
-            'roi_name': roi_names
-        })
-
-        # Remap roi_id to sequential 1-N so OHIF colour LUT is never out-of-range
-        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
-        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+        # Segment numbers 1-N ordered by certainty (high → low); the original
+        # lesion index stays visible in the segment name.
+        labels_df = self._lesion_labels(filtered_df)
 
         labels_path = os.path.join(self.output_dir, "labels.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
@@ -596,7 +617,7 @@ class MSXplainReport:
         )
         all_indices = set(report_df['Lesion Index'].tolist())
         surviving = sorted(all_indices - fp_indices)
-        remap = self._make_sequential_remap(surviving)
+        remap = self._certainty_order_remap(report_df, surviving)
 
         lesion_img = sitk.ReadImage(str(lesion_map_path))
         lesion_data = sitk.GetArrayFromImage(lesion_img)
@@ -609,17 +630,10 @@ class MSXplainReport:
 
         n_lesion_labels = len(surviving)
 
-        # Build lesion portion of the labels CSV
-        labels_rows: list = []
-        for _, row in filtered_df.iterrows():
-            new_id = remap.get(int(row['Lesion Index']))
-            if new_id is None:
-                continue
-            llc_str = ""
-            if 'LLC' in filtered_df.columns and pd.notna(row.get('LLC')):
-                llc_str = f" (LLC: {row['LLC']:.3f})"
-            name = f"{int(row['Lesion Index'])} {row['Lesion Type']}{llc_str}"
-            labels_rows.append((new_id, name))
+        # Build lesion portion of the labels CSV (same numbering as remap)
+        labels_rows: list = list(
+            self._lesion_labels(filtered_df).itertuples(index=False, name=None)
+        )
 
         # ── Region masks (IDs starting after the last lesion label) ──────
         region_label_id = n_lesion_labels + 1
@@ -657,26 +671,27 @@ class MSXplainReport:
         return Path(output_path), Path(labels_path), has_content
 
     def create_filtered_lesion_map(self, lesion_map_path, report_df, suffix="_dcmseg"):
-        """Create a filtered lesion map without False Positive lesions for DCM-SEG conversion
-        
+        """Create the lesion map for DCM-SEG conversion.
+
+        False Positive lesions are removed and the remaining lesions are
+        renumbered 1-N by certainty (high → low), matching labels.csv.
+
         Args:
             lesion_map_path: Path to the original lesion map NIFTI file
             report_df: DataFrame containing lesion information
             suffix: Suffix to add to the output filename (default: "_dcmseg")
-            
+
         Returns:
-            Tuple of (Path to the lesion map, bool indicating if filtering was performed)
-            If no False Positives: returns (original_path, False)
-            If False Positives filtered: returns (filtered_path, True)
+            Tuple of (Path to the new lesion map, True). The bool tells the
+            caller an intermediate file was written and can be removed.
         """
         # Get False Positive lesion indices
         false_positive_indices = report_df[report_df['Lesion Type'] == 'False Positive']['Lesion Index'].tolist()
         
-        if not false_positive_indices:
-            logger.info("No False Positive lesions found, using original lesion map")
-            return Path(lesion_map_path), False
-        
-        logger.info(f"Filtering out {len(false_positive_indices)} False Positive lesions: {false_positive_indices}")
+        if false_positive_indices:
+            logger.info(f"Filtering out {len(false_positive_indices)} False Positive lesions: {false_positive_indices}")
+        else:
+            logger.info("No False Positive lesions found; renumbering lesions by certainty")
         
         # Load the lesion map
         lesion_img = sitk.ReadImage(str(lesion_map_path))
@@ -689,12 +704,11 @@ class MSXplainReport:
         for fp_index in false_positive_indices:
             filtered_data[lesion_data == fp_index] = 0
 
-        # Remap remaining labels to sequential 1-N.
-        # OHIF Viewer indexes its colour LUT by SegmentNumber; gaps caused by
-        # removed FP lesions produce wrong colours for higher-numbered segments.
+        # Remap remaining labels to 1-N ordered by certainty (high → low), the
+        # same numbering compute_labels() writes to labels.csv.
         all_indices = set(report_df['Lesion Index'].tolist())
         surviving_indices = sorted(all_indices - set(false_positive_indices))
-        remap = self._make_sequential_remap(surviving_indices)
+        remap = self._certainty_order_remap(report_df, surviving_indices)
         remapped_data = np.zeros_like(filtered_data)
         for old_id, new_id in remap.items():
             remapped_data[filtered_data == old_id] = new_id
@@ -797,7 +811,7 @@ class MSXplainReport:
         for idx in indices_to_remove:
             filtered_data[lesion_data == idx] = 0
 
-        remap = self._make_sequential_remap(list(indices_to_keep))
+        remap = self._certainty_order_remap(report_df, list(indices_to_keep))
         remapped_data = np.zeros_like(filtered_data)
         for old_id, new_id in remap.items():
             remapped_data[filtered_data == old_id] = new_id
@@ -843,26 +857,9 @@ class MSXplainReport:
                 & (report_df['LLC'].notna())
                 & (report_df['LLC'] > certainty_threshold)
             )
-            filtered_df = report_df[keep_mask]
-
-            roi_names = filtered_df.apply(
-                lambda row: (
-                    f"{int(row['Lesion Index'])} {row['Lesion Type']} (LLC: {row['LLC']:.3f})"
-                    if pd.notna(row['LLC'])
-                    else f"{int(row['Lesion Index'])} {row['Lesion Type']}"
-                ),
-                axis=1,
-            )
-            labels_df = pd.DataFrame({
-                'roi_id': filtered_df['Lesion Index'],
-                'roi_name': roi_names,
-            })
-
-        # Remap roi_id to sequential 1-N — must mirror the remapping done in
-        # create_uncertainty_filtered_lesion_map so SegmentNumbers match
-        # the NIfTI pixel values exactly.
-        remap = self._make_sequential_remap(labels_df['roi_id'].tolist())
-        labels_df['roi_id'] = labels_df['roi_id'].map(remap)
+            # Must mirror create_uncertainty_filtered_lesion_map so
+            # SegmentNumbers match the NIfTI pixel values exactly.
+            labels_df = self._lesion_labels(report_df[keep_mask])
 
         labels_path = os.path.join(self.output_dir, "labels_uncertainty.csv")
         labels_df.to_csv(labels_path, index=False, header=False)
