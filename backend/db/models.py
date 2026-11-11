@@ -59,8 +59,11 @@ class Run(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # Explicit order: without it Postgres returns rows in physical order, which
+    # shifts as status updates rewrite rows, so the runs page reshuffled patients.
     patients = relationship(
-        "Patient", back_populates="run", cascade="all, delete-orphan"
+        "Patient", back_populates="run", cascade="all, delete-orphan",
+        order_by="Patient.patient_name",
     )
 
 
@@ -95,7 +98,8 @@ class Patient(Base):
 
     run = relationship("Run", back_populates="patients")
     sessions = relationship(
-        "SessionRow", back_populates="patient", cascade="all, delete-orphan"
+        "SessionRow", back_populates="patient", cascade="all, delete-orphan",
+        order_by="SessionRow.session_label",
     )
 
 
